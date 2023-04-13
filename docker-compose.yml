@@ -1,0 +1,329 @@
+networks:
+  frontend:
+    driver: ${NETWORKS_DRIVER}
+  backend:
+    driver: ${NETWORKS_DRIVER}
+volumes:
+  mysql:
+    driver: ${VOLUMES_DRIVER}
+  redis:
+    driver: ${VOLUMES_DRIVER}
+  mongo:
+    driver: ${VOLUMES_DRIVER}
+  minio:
+    driver: ${VOLUMES_DRIVER}
+  elasticsearch:
+    driver: ${VOLUMES_DRIVER}
+  postgres:
+    driver: ${VOLUMES_DRIVER}
+
+services:
+
+### Workspace Utilities ##################################
+    workspace:
+      build:
+        context: ./workspace
+        args:
+          - PUID=${WORKSPACE_PUID}
+          - PGID=${WORKSPACE_PGID}
+          - TZ=${WORKSPACE_TIMEZONE}
+          - http_proxy
+          - https_proxy
+          - no_proxy
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+      extra_hosts:
+        - "dockerhost:${DOCKER_HOST_IP}"
+      ports:
+        - "${WORKSPACE_SSH_PORT}:22"
+        - "${WORKSPACE_SERVE_HOST_PORT}:8000"
+      tty: true
+      networks:
+        - frontend
+        - backend
+      links:
+        - mysql
+
+### Minio ################################################
+    minio:
+      build: ./minio
+      volumes:
+        - ${DATA_PATH_HOST}/minio/data:/export
+        - ${DATA_PATH_HOST}/minio/config:/root/.minio
+      ports:
+        - "${MINIO_PORT}:9000"
+        - "${MINIO_CONSOLE_PORT}:9001"
+      environment:
+        - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+        - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      networks:
+        - frontend
+        - backend
+
+### MySQL ################################################
+    mysql:
+      build:
+        context: ./mysql
+        args:
+          - MYSQL_VERSION=${MYSQL_VERSION}
+      environment:
+        - MYSQL_DATABASE=${MYSQL_DATABASE}
+        - MYSQL_USER=${MYSQL_USER}
+        - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+        - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+        - TZ=${WORKSPACE_TIMEZONE}
+      volumes:
+        - ${DATA_PATH_HOST}/mysql:/var/lib/mysql
+        - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${MYSQL_PORT}:3306"
+      networks:
+        - backend
+
+### MongoDB ##############################################
+    mongo:
+      build: ./mongo
+      ports:
+        - "${MONGODB_PORT}:27017"
+      environment:
+        - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME}
+        - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
+      volumes:
+        - ${DATA_PATH_HOST}/mongo:/data/db
+        - ${DATA_PATH_HOST}/mongo_config:/data/configdb
+      networks:
+        - backend
+
+### Redis ################################################
+    redis:
+      build: ./redis
+      volumes:
+        - ${DATA_PATH_HOST}/redis:/data
+      command: --requirepass ${REDIS_PASSWORD}
+      ports:
+        - "${REDIS_PORT}:6379"
+      networks:
+        - backend
+
+### RabbitMQ #############################################
+    rabbitmq:
+      build: ./rabbitmq
+      ports:
+        - "${RABBITMQ_NODE_HOST_PORT}:5672"
+        - "${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672"
+        - "${RABBITMQ_MANAGEMENT_HTTPS_HOST_PORT}:15671"
+        - "${RABBITMQ_WEB_STOMP_HOST_PORT}:15674"
+      privileged: true
+      hostname: laradock-rabbitmq
+      volumes:
+        - ${DATA_PATH_HOST}/rabbitmq:/var/lib/rabbitmq
+        - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+        - ./rabbitmq/management_agent.disable_metrics_collector.conf:/etc/rabbitmq/conf.d/management_agent.disable_metrics_collector.conf
+      networks:
+        - backend
+
+### ElasticSearch ########################################
+    elasticsearch:
+      build:
+        context: ./elasticsearch
+        args:
+          - ELK_VERSION=${ELK_VERSION}
+      volumes:
+        - elasticsearch:/usr/share/elasticsearch/data
+      environment:
+        - cluster.name=laradock-cluster
+        - node.name=laradock-node
+        - bootstrap.memory_lock=true
+        - xpack.security.enabled=false
+        - xpack.security.transport.ssl.enabled=false
+        - indices.id_field_data.enabled=true
+        - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+        - cluster.initial_master_nodes=laradock-node
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+        nofile:
+          soft: 65536
+          hard: 65536
+      ports:
+        - "${ELASTICSEARCH_HOST_HTTP_PORT}:9200"
+        - "${ELASTICSEARCH_HOST_TRANSPORT_PORT}:9300"
+      networks:
+        - frontend
+        - backend
+
+### Logstash ##############################################
+    logstash:
+      build:
+        context: ./logstash
+        args:
+          - ELK_VERSION=${ELK_VERSION}
+      volumes:
+        - './logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml'
+        - './logstash/pipeline:/usr/share/logstash/pipeline'
+      ports:
+        - '5001:5001'
+      environment:
+        LS_JAVA_OPTS: '-Xmx1g -Xms1g'
+      env_file:
+        - .env
+      networks:
+        - frontend
+        - backend
+      depends_on:
+        - elasticsearch
+
+### Kibana ##############################################
+    kibana:
+      build:
+        context: ./kibana
+        args:
+          - ELK_VERSION=${ELK_VERSION}
+      ports:
+        - "${KIBANA_HTTP_PORT}:5601"
+      depends_on:
+        - elasticsearch
+      networks:
+        - frontend
+        - backend
+
+### Portainer ################################################
+    portainer:
+      build:
+        context: ./portainer
+      volumes:
+        - ${DATA_PATH_HOST}/portainer_data:/data
+        - /var/run/docker.sock:/var/run/docker.sock
+      extra_hosts:
+        - "dockerhost:${DOCKER_HOST_IP}"
+      ports:
+        - 9010:9000
+      networks:
+        - backend
+
+### Gitlab ################################################
+    gitlab:
+      build:
+        context: ./gitlab
+      environment:
+        GITLAB_OMNIBUS_CONFIG: |
+          external_url '${GITLAB_DOMAIN_NAME}'
+          redis['enable'] = false
+          nginx['listen_https'] = false
+          nginx['listen_port'] = 80
+          nginx['custom_gitlab_server_config'] = "set_real_ip_from 172.0.0.0/8;\nreal_ip_header X-Real-IP;\nreal_ip_recursive on;"
+          postgresql['enable'] = false
+          gitlab_rails['trusted_proxies'] = ['caddy','nginx','apache2']
+          gitlab_rails['redis_host'] = 'redis'
+          gitlab_rails['redis_database'] = 8
+          gitlab_rails['db_host'] = '${GITLAB_POSTGRES_HOST}'
+          gitlab_rails['db_username'] = '${GITLAB_POSTGRES_USER}'
+          gitlab_rails['db_password'] = '${GITLAB_POSTGRES_PASSWORD}'
+          gitlab_rails['db_database'] = '${GITLAB_POSTGRES_DB}'
+          gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+          gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_HOST_SSH_PORT}
+      volumes:
+        - ${DATA_PATH_HOST}/gitlab/config:/etc/gitlab
+        - ${DATA_PATH_HOST}/gitlab/data:/var/opt/gitlab
+        - ${GITLAB_HOST_LOG_PATH}:/var/log/gitlab
+      ports:
+        - "${GITLAB_HOST_HTTP_PORT}:80"
+        - "${GITLAB_HOST_HTTPS_PORT}:443"
+        - "${GITLAB_HOST_SSH_PORT}:22"
+      networks:
+        - backend
+      depends_on:
+        - redis
+        - postgres
+    gitlab-runner:
+      image: gitlab/gitlab-runner:latest
+      environment:
+        - CI_SERVER_URL=${GITLAB_CI_SERVER_URL}
+        - REGISTRATION_TOKEN=${GITLAB_RUNNER_REGISTRATION_TOKEN}
+        - RUNNER_NAME=${COMPOSE_PROJECT_NAME}-runner
+        - REGISTER_NON_INTERACTIVE=${GITLAB_REGISTER_NON_INTERACTIVE}
+        - RUNNER_EXECUTOR=shell
+      volumes:
+        - ${DATA_PATH_HOST}/gitlab/runner:/etc/gitlab-runner
+        - /var/run/docker.sock:/var/run/docker.sock:rw
+      restart: always
+
+### kafka ####################################################
+    kafka:
+      image: wurstmeister/kafka
+      ports:
+        - "9092:9092"
+      environment:
+        KAFKA_BROKER_ID: 1
+        KAFKA_ADVERTISED_HOST_NAME: 127.0.0.1
+        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+        KAFKA_MESSAGE_MAX_BYTES: 2000000
+        KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      volumes:
+        - ${DATA_PATH_HOST}/kafka:/kafka
+        - /var/run/docker.sock:/var/run/docker.sock
+      networks:
+        - backend
+
+### kafka-manager ###########################################
+    kafka-manager:
+      image: sheepkiller/kafka-manager
+      ports:
+        - 9020:9000
+      environment:
+        ZK_HOSTS: zookeeper:2181
+      networks:
+        - backend
+
+### PostgreSQL ###########################################
+    postgres:
+      build:
+        context: ./postgres
+        args:
+          - POSTGRES_VERSION=${POSTGRES_VERSION}
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+        - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_INIT=${GITLAB_POSTGRES_INIT}
+        - GITLAB_POSTGRES_USER=${GITLAB_POSTGRES_USER}
+        - GITLAB_POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_DB=${GITLAB_POSTGRES_DB}
+      networks:
+        - backend
+
+### PostgreSQL PostGis ###################################
+    postgres-postgis:
+      build:
+        context: ./postgres-postgis
+        args:
+          - POSTGIS_VERSION=${POSTGIS_VERSION}
+          - INSTALL_PGSQL_HTTP_FOR_POSTGIS13=${POSTGIS_INSTALL_PGSQL_HTTP_FOR_POSTGIS13}
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      networks:
+        - backend
+
+### Grafana ################################################
+    grafana:
+      build:
+        context: ./grafana
+      volumes:
+        - ${DATA_PATH_HOST}/grafana:/var/lib/grafana
+      ports:
+        - "${GRAFANA_PORT}:3000"
+      networks:
+        - backend
+
