@@ -23,10 +23,12 @@ services:
     workspace:
       build:
         context: ./workspace
+        dockerfile: Dockerfile
         args:
           - PUID=${WORKSPACE_PUID}
           - PGID=${WORKSPACE_PGID}
           - TZ=${WORKSPACE_TIMEZONE}
+          - INSTALL_WORKSPACE_SSH=${WORKSPACE_INSTALL_WORKSPACE_SSH}
           - http_proxy
           - https_proxy
           - no_proxy
@@ -41,12 +43,11 @@ services:
       networks:
         - frontend
         - backend
-      links:
-        - mysql
 
 ### Minio ################################################
     minio:
-      build: ./minio
+      build:
+        context: ./minio
       volumes:
         - ${DATA_PATH_HOST}/minio/data:/export
         - ${DATA_PATH_HOST}/minio/config:/root/.minio
@@ -64,6 +65,7 @@ services:
     mysql:
       build:
         context: ./mysql
+        dockerfile: Dockerfile
         args:
           - MYSQL_VERSION=${MYSQL_VERSION}
       environment:
@@ -82,7 +84,8 @@ services:
 
 ### MongoDB ##############################################
     mongo:
-      build: ./mongo
+      build: 
+        context: ./mongo
       ports:
         - "${MONGODB_PORT}:27017"
       environment:
@@ -96,7 +99,8 @@ services:
 
 ### Redis ################################################
     redis:
-      build: ./redis
+      build: 
+        context: ./redis
       volumes:
         - ${DATA_PATH_HOST}/redis:/data
       command: --requirepass ${REDIS_PASSWORD}
@@ -105,16 +109,57 @@ services:
       networks:
         - backend
 
+### PostgreSQL ###########################################
+    postgres:
+      build:
+        context: ./postgres
+        args:
+          - POSTGRES_VERSION=${POSTGRES_VERSION}
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+        - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_INIT=${GITLAB_POSTGRES_INIT}
+        - GITLAB_POSTGRES_USER=${GITLAB_POSTGRES_USER}
+        - GITLAB_POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_DB=${GITLAB_POSTGRES_DB}
+      networks:
+        - backend
+
+### PostgreSQL PostGis ###################################
+    postgres-postgis:
+      build:
+        context: ./postgres-postgis
+        args:
+          - POSTGIS_VERSION=${POSTGIS_VERSION}
+          - INSTALL_PGSQL_HTTP_FOR_POSTGIS13=${POSTGIS_INSTALL_PGSQL_HTTP_FOR_POSTGIS13}
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      networks:
+        - backend
+
 ### RabbitMQ #############################################
     rabbitmq:
-      build: ./rabbitmq
+      build:
+        context: ./rabbitmq
       ports:
         - "${RABBITMQ_NODE_HOST_PORT}:5672"
         - "${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672"
         - "${RABBITMQ_MANAGEMENT_HTTPS_HOST_PORT}:15671"
         - "${RABBITMQ_WEB_STOMP_HOST_PORT}:15674"
       privileged: true
-      hostname: laradock-rabbitmq
+      hostname: godocker-rabbitmq
       volumes:
         - ${DATA_PATH_HOST}/rabbitmq:/var/lib/rabbitmq
         - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
@@ -131,14 +176,14 @@ services:
       volumes:
         - elasticsearch:/usr/share/elasticsearch/data
       environment:
-        - cluster.name=laradock-cluster
-        - node.name=laradock-node
+        - cluster.name=godocker-cluster
+        - node.name=godocker-node
         - bootstrap.memory_lock=true
         - xpack.security.enabled=false
         - xpack.security.transport.ssl.enabled=false
         - indices.id_field_data.enabled=true
         - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-        - cluster.initial_master_nodes=laradock-node
+        - cluster.initial_master_nodes=godocker-node
       ulimits:
         memlock:
           soft: -1
@@ -276,46 +321,6 @@ services:
       networks:
         - backend
 
-### PostgreSQL ###########################################
-    postgres:
-      build:
-        context: ./postgres
-        args:
-          - POSTGRES_VERSION=${POSTGRES_VERSION}
-      volumes:
-        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
-        - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
-      ports:
-        - "${POSTGRES_PORT}:5432"
-      environment:
-        - POSTGRES_DB=${POSTGRES_DB}
-        - POSTGRES_USER=${POSTGRES_USER}
-        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-        - GITLAB_POSTGRES_INIT=${GITLAB_POSTGRES_INIT}
-        - GITLAB_POSTGRES_USER=${GITLAB_POSTGRES_USER}
-        - GITLAB_POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD}
-        - GITLAB_POSTGRES_DB=${GITLAB_POSTGRES_DB}
-      networks:
-        - backend
-
-### PostgreSQL PostGis ###################################
-    postgres-postgis:
-      build:
-        context: ./postgres-postgis
-        args:
-          - POSTGIS_VERSION=${POSTGIS_VERSION}
-          - INSTALL_PGSQL_HTTP_FOR_POSTGIS13=${POSTGIS_INSTALL_PGSQL_HTTP_FOR_POSTGIS13}
-      volumes:
-        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
-      ports:
-        - "${POSTGRES_PORT}:5432"
-      environment:
-        - POSTGRES_DB=${POSTGRES_DB}
-        - POSTGRES_USER=${POSTGRES_USER}
-        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      networks:
-        - backend
-
 ### Grafana ################################################
     grafana:
       build:
@@ -327,3 +332,59 @@ services:
       networks:
         - backend
 
+### SWAGGER EDITOR ############################################
+    swagger-editor:
+      build:
+        context: ./swagger-editor
+      ports:
+        - ${SWAGGER_EDITOR_PORT}:8080
+      networks:
+        - backend
+
+### SWAGGER UI ################################################
+    swagger-ui:
+      build:
+        context: ./swagger-ui
+      environment:
+        - API_URL=${SWAGGER_API_URL}
+      ports:
+        - ${SWAGGER_UI_PORT}:8080
+      networks:
+        - backend
+
+### TRAEFIK #########################################
+    traefik:
+      build:
+        context: ./traefik
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - ./traefik/data:/data
+      command:
+        - "--api"
+        - "--providers.docker.exposedbydefault=false"
+        - "--accesslog.filepath=/data/access.log"
+        # entrypoints
+        - "--entrypoints.http.address=:${TRAEFIK_HOST_HTTP_PORT}"
+        - "--entrypoints.http.http.redirections.entrypoint.to=https"
+        - "--entrypoints.https.address=:${TRAEFIK_HOST_HTTPS_PORT}"
+        - "--entrypoints.traefik.address=:${TRAEFIK_DASHBOARD_PORT}"
+        # certificatesresolvers
+        - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+        - "--certificatesresolvers.letsencrypt.acme.storage=/data/acme.json"
+        - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http"
+      ports:
+        - "${TRAEFIK_HOST_HTTP_PORT}:${TRAEFIK_HOST_HTTP_PORT}"
+        - "${TRAEFIK_HOST_HTTPS_PORT}:${TRAEFIK_HOST_HTTPS_PORT}"
+        - "${TRAEFIK_DASHBOARD_PORT}:${TRAEFIK_DASHBOARD_PORT}"
+      networks:
+        - frontend
+        - backend
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.traefik.rule=Host(`${ACME_DOMAIN}`)"
+        - "traefik.http.routers.traefik.entrypoints=traefik"
+        - "traefik.http.routers.traefik.service=api@internal"
+        - "traefik.http.routers.traefik.middlewares=access-auth"
+        - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+        - "traefik.http.middlewares.access-auth.basicauth.realm=Login Required"
+        - "traefik.http.middlewares.access-auth.basicauth.users=${TRAEFIK_DASHBOARD_USER}"

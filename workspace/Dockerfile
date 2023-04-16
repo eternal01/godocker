@@ -3,7 +3,7 @@
 # Image Setup
 #--------------------------------------------------------------------------
 
-FROM golang:latest
+FROM golang
 
 LABEL maintainer="muxk <361087696@qq.com>"
 
@@ -16,12 +16,6 @@ ENV GO111MODULE=on \
 # Start as root
 USER root
 
-# Add a non-root user to prevent files being created with root permissions on host machine.
-ARG PUID=1000
-ENV PUID ${PUID}
-ARG PGID=1000
-ENV PGID ${PGID}
-
 ###########################################################################
 # Set Timezone
 ###########################################################################
@@ -32,68 +26,43 @@ ENV TZ ${TZ}
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 ###########################################################################
-# User Aliases
+# DNS utilities:
 ###########################################################################
 
-USER root
+ARG INSTALL_DNSUTILS=false
 
-RUN useradd --create-home --no-log-init --shell /bin/bash godocker
-RUN adduser godocker sudo
-RUN echo 'godocker:godocker' | chpasswd
+RUN if [ ${INSTALL_DNSUTILS} = true ]; then \
+    apt-get update && apt-get upgrade -y && apt-get autoremove && apt-get install -y dnsutils \
+;fi
 
-COPY ./aliases.sh /root/aliases.sh
-COPY ./aliases.sh /home/godocker/aliases.sh
+###########################################################################
+# zsh
+###########################################################################
 
-RUN sed -i 's/\r//' /root/aliases.sh && \
-    sed -i 's/\r//' /home/godocker/aliases.sh && \
-    chown godocker:godocker /home/godocker/aliases.sh && \
-    echo "" >> ~/.bashrc && \
-    echo "# Load Custom Aliases" >> ~/.bashrc && \
-    echo "source ~/aliases.sh" >> ~/.bashrc && \
-	  echo "" >> ~/.bashrc
-
-USER godocker
-
-RUN echo "" >> ~/.bashrc && \
-    echo "# Load Custom Aliases" >> ~/.bashrc && \
-    echo "source ~/aliases.sh" >> ~/.bashrc && \
-	  echo "" >> ~/.bashrc
+RUN apt-get update && apt-get install -y vim zsh zsh-syntax-highlighting
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh) --keep-zshrc"
+RUN echo "source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> /root/.zshrc
+RUN chsh -s /bin/zsh
+RUN /bin/zsh -c "source /root/.zshrc"
 
 ###########################################################################
 # ssh:
 ###########################################################################
 
-USER root
 ARG INSTALL_WORKSPACE_SSH=false
 
 COPY insecure_id_rsa /tmp/id_rsa
 COPY insecure_id_rsa.pub /tmp/id_rsa.pub
 
 RUN if [ ${INSTALL_WORKSPACE_SSH} = true ]; then \
-    rm -f /etc/service/sshd/down && \
     mkdir -p /root/.ssh \
-    && touch /root/.ssh/authorized_keys && \
+    && rm -f /etc/service/sshd/down && \
     cat /tmp/id_rsa.pub >> /root/.ssh/authorized_keys \
         && cat /tmp/id_rsa.pub >> /root/.ssh/id_rsa.pub \
         && cat /tmp/id_rsa >> /root/.ssh/id_rsa \
         && rm -f /tmp/id_rsa* \
         && chmod 644 /root/.ssh/authorized_keys /root/.ssh/id_rsa.pub \
     && chmod 400 /root/.ssh/id_rsa \
-    && mkdir -p /home/godocker/.ssh \
-    && cp -rf /root/.ssh /home/godocker \
-    && chown -R godocker:godocker /home/godocker/.ssh \
-;fi
-
-###########################################################################
-# DNS utilities:
-###########################################################################
-
-USER root
-
-ARG INSTALL_DNSUTILS=false
-
-RUN if [ ${INSTALL_DNSUTILS} = true ]; then \
-    apt-get update && apt-get install -y dnsutils \
 ;fi
 
 #
@@ -102,12 +71,10 @@ RUN if [ ${INSTALL_DNSUTILS} = true ]; then \
 #--------------------------------------------------------------------------
 #
 
-USER root
-
 # Clean up
 RUN apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     rm /var/log/lastlog /var/log/faillog
 
 # Set default work directory
-WORKDIR /go
+WORKDIR /go/src
