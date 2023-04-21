@@ -1,3 +1,3 @@
-FROM grafana/grafana:latest
+FROM grafana/grafana:${GRAFANA_VERSION}
 
 EXPOSE 3000

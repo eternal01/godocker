@@ -1,3 +1,4 @@
+version: '3.5'
 networks:
   frontend:
     driver: ${NETWORKS_DRIVER}
@@ -27,7 +28,7 @@ services:
         args:
           - PUID=${WORKSPACE_PUID}
           - PGID=${WORKSPACE_PGID}
-          - TZ=${WORKSPACE_TIMEZONE}
+          - TZ=${TZ}
           - INSTALL_WORKSPACE_SSH=${WORKSPACE_INSTALL_WORKSPACE_SSH}
           - http_proxy
           - https_proxy
@@ -43,11 +44,45 @@ services:
       networks:
         - frontend
         - backend
+      restart: always
+
+### Etcd ##################################
+    etcd: 
+        build:
+          context: ./etcd 
+          dockerfile: Dockerfile
+        environment:
+          - TZ=${TZ}
+          - ALLOW_NONE_AUTHENTICATION=yes
+          - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+        ports: 
+          - "${ETCD_PORT}:2379"
+        networks:
+          - frontend
+          - backend
+        restart: always
+
+### Etcd-manager ##################################
+    etcd-manager:
+      build:
+        context: ./etcd-manager
+        dockerfile: Dockerfile
+      environment:
+        - TZ=${TZ}
+      ports:
+        - "${ETCD_MANAGER_PORT}:8080"      
+      depends_on:                  
+        - etcd                                          
+      networks:
+        - frontend
+        - backend
+      restart: always
 
 ### Minio ################################################
     minio:
       build:
         context: ./minio
+        dockerfile: Dockerfile
       volumes:
         - ${DATA_PATH_HOST}/minio/data:/export
         - ${DATA_PATH_HOST}/minio/config:/root/.minio
@@ -60,6 +95,7 @@ services:
       networks:
         - frontend
         - backend
+      restart: always
 
 ### MySQL ################################################
     mysql:
@@ -73,19 +109,22 @@ services:
         - MYSQL_USER=${MYSQL_USER}
         - MYSQL_PASSWORD=${MYSQL_PASSWORD}
         - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-        - TZ=${WORKSPACE_TIMEZONE}
+        - TZ=${TZ}
       volumes:
         - ${DATA_PATH_HOST}/mysql:/var/lib/mysql
         - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
       ports:
         - "${MYSQL_PORT}:3306"
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### MongoDB ##############################################
     mongo:
       build: 
         context: ./mongo
+        dockerfile: Dockerfile
       ports:
         - "${MONGODB_PORT}:27017"
       environment:
@@ -95,24 +134,30 @@ services:
         - ${DATA_PATH_HOST}/mongo:/data/db
         - ${DATA_PATH_HOST}/mongo_config:/data/configdb
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### Redis ################################################
     redis:
       build: 
         context: ./redis
+        dockerfile: Dockerfile
       volumes:
         - ${DATA_PATH_HOST}/redis:/data
       command: --requirepass ${REDIS_PASSWORD}
       ports:
         - "${REDIS_PORT}:6379"
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### PostgreSQL ###########################################
     postgres:
       build:
         context: ./postgres
+        dockerfile: Dockerfile
         args:
           - POSTGRES_VERSION=${POSTGRES_VERSION}
       volumes:
@@ -129,12 +174,15 @@ services:
         - GITLAB_POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD}
         - GITLAB_POSTGRES_DB=${GITLAB_POSTGRES_DB}
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### PostgreSQL PostGis ###################################
     postgres-postgis:
       build:
         context: ./postgres-postgis
+        dockerfile: Dockerfile
         args:
           - POSTGIS_VERSION=${POSTGIS_VERSION}
           - INSTALL_PGSQL_HTTP_FOR_POSTGIS13=${POSTGIS_INSTALL_PGSQL_HTTP_FOR_POSTGIS13}
@@ -147,12 +195,15 @@ services:
         - POSTGRES_USER=${POSTGRES_USER}
         - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### RabbitMQ #############################################
     rabbitmq:
       build:
         context: ./rabbitmq
+        dockerfile: Dockerfile
       ports:
         - "${RABBITMQ_NODE_HOST_PORT}:5672"
         - "${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672"
@@ -165,12 +216,15 @@ services:
         - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
         - ./rabbitmq/management_agent.disable_metrics_collector.conf:/etc/rabbitmq/conf.d/management_agent.disable_metrics_collector.conf
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### ElasticSearch ########################################
     elasticsearch:
       build:
         context: ./elasticsearch
+        dockerfile: Dockerfile
         args:
           - ELK_VERSION=${ELK_VERSION}
       volumes:
@@ -197,11 +251,13 @@ services:
       networks:
         - frontend
         - backend
+      restart: always
 
 ### Logstash ##############################################
     logstash:
       build:
         context: ./logstash
+        dockerfile: Dockerfile
         args:
           - ELK_VERSION=${ELK_VERSION}
       volumes:
@@ -218,11 +274,13 @@ services:
         - backend
       depends_on:
         - elasticsearch
+      restart: always
 
 ### Kibana ##############################################
     kibana:
       build:
         context: ./kibana
+        dockerfile: Dockerfile
         args:
           - ELK_VERSION=${ELK_VERSION}
       ports:
@@ -232,11 +290,13 @@ services:
       networks:
         - frontend
         - backend
+      restart: always
 
 ### Portainer ################################################
     portainer:
       build:
         context: ./portainer
+        dockerfile: Dockerfile
       volumes:
         - ${DATA_PATH_HOST}/portainer_data:/data
         - /var/run/docker.sock:/var/run/docker.sock
@@ -245,12 +305,15 @@ services:
       ports:
         - 9010:9000
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### Gitlab ################################################
     gitlab:
       build:
         context: ./gitlab
+        dockerfile: Dockerfile
       environment:
         GITLAB_OMNIBUS_CONFIG: |
           external_url '${GITLAB_DOMAIN_NAME}'
@@ -277,6 +340,7 @@ services:
         - "${GITLAB_HOST_HTTPS_PORT}:443"
         - "${GITLAB_HOST_SSH_PORT}:22"
       networks:
+        - frontend
         - backend
       depends_on:
         - redis
@@ -309,7 +373,9 @@ services:
         - ${DATA_PATH_HOST}/kafka:/kafka
         - /var/run/docker.sock:/var/run/docker.sock
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### kafka-manager ###########################################
     kafka-manager:
@@ -319,43 +385,55 @@ services:
       environment:
         ZK_HOSTS: zookeeper:2181
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### Grafana ################################################
     grafana:
       build:
         context: ./grafana
+        dockerfile: Dockerfile
       volumes:
         - ${DATA_PATH_HOST}/grafana:/var/lib/grafana
       ports:
         - "${GRAFANA_PORT}:3000"
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### SWAGGER EDITOR ############################################
     swagger-editor:
       build:
         context: ./swagger-editor
+        dockerfile: Dockerfile
       ports:
         - ${SWAGGER_EDITOR_PORT}:8080
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### SWAGGER UI ################################################
     swagger-ui:
       build:
         context: ./swagger-ui
+        dockerfile: Dockerfile
       environment:
         - API_URL=${SWAGGER_API_URL}
       ports:
         - ${SWAGGER_UI_PORT}:8080
       networks:
+        - frontend
         - backend
+      restart: always
 
 ### TRAEFIK #########################################
     traefik:
       build:
         context: ./traefik
+        dockerfile: Dockerfile
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
         - ./traefik/data:/data
@@ -388,3 +466,53 @@ services:
         - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
         - "traefik.http.middlewares.access-auth.basicauth.realm=Login Required"
         - "traefik.http.middlewares.access-auth.basicauth.users=${TRAEFIK_DASHBOARD_USER}"
+
+### PROMETHEUS #########################################
+    prometheus:
+        build:
+          context: ./prometheus
+          dockerfile: Dockerfile
+        environment:
+          - TZ=${TZ}
+        volumes:
+          - ./prometheus/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml 
+        ports:
+          - "${PROMETHEUS_PORT}:9090" 
+        networks:
+          - frontend
+          - backend
+        restart: always
+
+### JAEGER #########################################
+    jaeger:
+        build:
+          context: ./jaeger
+          dockerfile: Dockerfile
+        environment:
+          - TZ=${TZ}
+        ports:
+          - "${JAEGER_PORT}:16686" 
+        networks:
+          - frontend
+          - backend
+        restart: always
+
+### DTM #########################################
+    dtm:
+      build:
+        context: ./dtm
+        dockerfile: Dockerfile
+      environment:
+        - TZ=${TZ}
+      entrypoint:
+        - "/app/dtm/dtm"
+        - "-c=/app/dtm/configs/config.yaml"
+      volumes:
+        - ./dtm/config.yml:/app/dtm/configs/config.yaml 
+      ports:
+        - "${DTM_HTTP_PORT}:36789"
+        - "${DTM_GRPC_PORT}:36790"
+      networks:
+        - frontend
+        - backend
+      restart: always

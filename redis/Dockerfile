@@ -1,4 +1,4 @@
-FROM redis:latest
+FROM redis:${REDIS_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
 

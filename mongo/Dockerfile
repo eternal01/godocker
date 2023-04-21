@@ -1,4 +1,4 @@
-FROM mongo:latest
+FROM mongo:${MONGO_VSRSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
 

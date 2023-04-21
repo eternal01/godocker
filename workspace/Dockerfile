@@ -3,7 +3,7 @@
 # Image Setup
 #--------------------------------------------------------------------------
 
-FROM golang
+FROM golang:${GOLANG_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
 
@@ -39,11 +39,26 @@ RUN if [ ${INSTALL_DNSUTILS} = true ]; then \
 # zsh
 ###########################################################################
 
-RUN apt-get update && apt-get install -y vim zsh zsh-syntax-highlighting
+RUN apt-get update && apt-get install -y vim \
+zsh \
+zsh-syntax-highlighting \
+screen
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh) --keep-zshrc"
 RUN echo "source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> /root/.zshrc
 RUN chsh -s /bin/zsh
 RUN /bin/zsh -c "source /root/.zshrc"
+
+###########################################################################
+# goctl
+###########################################################################
+
+RUN go install github.com/zeromicro/go-zero/tools/goctl@latest
+
+###########################################################################
+# protoc & protoc-gen-go
+###########################################################################
+
+RUN goctl env check -i -f --verbose
 
 ###########################################################################
 # ssh:
