@@ -26,19 +26,33 @@ scrape_configs:
     # scheme defaults to 'http'.
 
     static_configs:
-      - targets: ["localhost:8000"]
+      - targets: ["localhost:9090"]
 
-  # 我们自己的商城项目配置
-  - job_name: 'mall'
+  # 项目配置
+  - job_name: 'go-micro'
     static_configs:
       # 目标的采集地址
-      - targets: ['golang:8000']
+      - targets: ['workspace:8999']
         labels:
           # 自定义标签
-          app: 'gateway'
-          env: 'test'
-
-      - targets: ['golang:9001']
-        labels:
-          app: 'user-rpc'
+          # job: "gateway-api",
+          app: 'gateway-api'
           env: 'local'
+          instance: "127.0.0.1:8999"
+
+      - targets: ['workspace:9601']
+        labels:
+          # job: "basic-rpc",
+          app: 'basic-rpc'
+          env: 'local'
+          instance: "127.0.0.1:9601"
+
+      - targets: ['workspace:9602']
+        labels:
+          # job: "account-rpc",
+          app: 'account-rpc'
+          env: 'local'
+          instance: "127.0.0.1:9602"
+          
+
+

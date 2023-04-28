@@ -26,10 +26,10 @@ services:
         context: ./workspace
         dockerfile: Dockerfile
         args:
+          - GOLANG_VERSION=${GOLANG_VERSION}
           - PUID=${WORKSPACE_PUID}
           - PGID=${WORKSPACE_PGID}
           - TZ=${TZ}
-          - INSTALL_WORKSPACE_SSH=${WORKSPACE_INSTALL_WORKSPACE_SSH}
           - http_proxy
           - https_proxy
           - no_proxy
@@ -51,6 +51,8 @@ services:
         build:
           context: ./etcd 
           dockerfile: Dockerfile
+          args:
+          - ETCD_VERSION=${ETCD_VERSION}
         environment:
           - TZ=${TZ}
           - ALLOW_NONE_AUTHENTICATION=yes
@@ -67,6 +69,8 @@ services:
       build:
         context: ./etcd-manager
         dockerfile: Dockerfile
+        args:
+          - ETCD_MANAGER_VERSION=${ETCD_MANAGER_VERSION}
       environment:
         - TZ=${TZ}
       ports:
@@ -83,6 +87,8 @@ services:
       build:
         context: ./minio
         dockerfile: Dockerfile
+        args:
+          - MINIO_VERSION=${MINIO_VERSION}
       volumes:
         - ${DATA_PATH_HOST}/minio/data:/export
         - ${DATA_PATH_HOST}/minio/config:/root/.minio
@@ -125,6 +131,8 @@ services:
       build: 
         context: ./mongo
         dockerfile: Dockerfile
+        args:
+          - MONGO_VERSION=${MONGO_VERSION}
       ports:
         - "${MONGODB_PORT}:27017"
       environment:
@@ -143,6 +151,8 @@ services:
       build: 
         context: ./redis
         dockerfile: Dockerfile
+        args:
+          - REDIS_VERSION=${REDIS_VERSION}
       volumes:
         - ${DATA_PATH_HOST}/redis:/data
       command: --requirepass ${REDIS_PASSWORD}
@@ -297,6 +307,8 @@ services:
       build:
         context: ./portainer
         dockerfile: Dockerfile
+        args:
+          - PORTAINER_VERSION=${PORTAINER_VERSION}
       volumes:
         - ${DATA_PATH_HOST}/portainer_data:/data
         - /var/run/docker.sock:/var/run/docker.sock
@@ -394,8 +406,12 @@ services:
       build:
         context: ./grafana
         dockerfile: Dockerfile
-      volumes:
-        - ${DATA_PATH_HOST}/grafana:/var/lib/grafana
+        args:
+          - GRAFANA_VERSION=${GRAFANA_VERSION}
+      # volumes:
+      #   - ${DATA_PATH_HOST}/grafana:/var/lib/grafana
+      environment:
+        - TZ=${TZ}
       ports:
         - "${GRAFANA_PORT}:3000"
       networks:
@@ -472,6 +488,8 @@ services:
         build:
           context: ./prometheus
           dockerfile: Dockerfile
+          args:
+          - PROMETHEUS_VERSION=${PROMETHEUS_VERSION}
         environment:
           - TZ=${TZ}
         volumes:
@@ -488,6 +506,8 @@ services:
         build:
           context: ./jaeger
           dockerfile: Dockerfile
+          args:
+          - JAEGER_VERSION=${JAEGER_VERSION}
         environment:
           - TZ=${TZ}
         ports:
@@ -502,6 +522,8 @@ services:
       build:
         context: ./dtm
         dockerfile: Dockerfile
+        args:
+          - DTM_VERSION=${DTM_VERSION}
       environment:
         - TZ=${TZ}
       entrypoint:

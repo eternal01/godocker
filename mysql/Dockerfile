@@ -1,4 +1,4 @@
-FROM mysql:{MYSQL_VERSION}
+FROM mysql:${MYSQL_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
 
