@@ -65,41 +65,52 @@ make full-env   # 全部服务（资源消耗大，慎用）
 
 ### 语言版本管理
 
-workspace 使用 [mise](https://mise.jdx.dev/) 管理语言版本。在项目根目录创建 `.tool-versions` 文件即可自动安装所需语言。
+workspace 使用 [mise](https://mise.jdx.dev/) 管理语言版本。零配置流程：
 
-**快速开始 - 选择语言配置模板：**
+1. 容器已开启 `MISE_AUTO_INSTALL=true`——进入含 `.mise.toml` 的目录时，缺失的 toolchain 会按需安装
+2. zsh 配置了 `chpwd` 钩子，首次 `cd` 进项目目录时自动调用 `detect-stack` 扫描 `package.json` / `go.mod` / `Cargo.toml` / `composer.json` / `pyproject.toml`，**生成 `.mise.toml`**（已存在则跳过）
+3. 生成完成后直接 `mise use go@1.x` 或运行命令即可，工具链按需落地
+
+**自动嗅探规则：**
+
+| 项目文件 | 嗅探到的 tool + 默认版本 |
+|---|---|
+| `package.json` | `node` (engines.node 优先，否则 `22`) |
+| `go.mod` | `go` (取 `go` 指令，否则 `1.23`) |
+| `Cargo.toml` | `rust` (rust-version 优先，否则 `stable`) |
+| `composer.json` | `php` (require.php 优先，否则 `8.3`) |
+| `pyproject.toml` / `requirements.txt` | `python` (requires-python 优先，否则 `3.12`) |
+
+**交互式初始化（自动嗅探 + 确认/覆盖/追加）：**
 
 ```bash
-# 在你的项目目录中
-cd ~/codes/project
-cp ~/codes/development-docker/tool-versions-go .tool-versions    # Go 项目
-# 或
-cp ~/codes/development-docker/tool-versions-rust .tool-versions  # Rust 项目
-# 或
-cp ~/codes/development-docker/tool-versions-php .tool-versions   # PHP 项目
-# 或
-cp ~/codes/development-docker/tool-versions-fullstack .tool-versions  # 全栈项目
-```
-
-**进入容器安装语言：**
-
-```bash
+# 在容器内，针对某个项目目录
 docker compose exec workspace zsh
-mise install
+cd ~/codes/my-project
+init-project                 # 交互式生成 .mise.toml
 ```
 
-**手动管理语言版本：**
+**手动管理（覆盖自动嗅探）：**
 
 ```bash
-# 安装特定版本
-mise install go@1.22.4
+# 安装并锁定到当前项目
+mise use go@1.22.4
+mise use node@22
 
-# 设置全局默认版本
+# 设置全局默认（影响所有无项目级配置的项目）
 mise use -g go@1.22.4
 
 # 查看已安装版本
 mise ls
 ```
+
+**跳过自动嗅探（按项目关闭）：**
+
+```bash
+export MISED_SKIP_DETECT=1    # 之后再 cd 就不再生成 .mise.toml
+```
+
+> `detect-stack` 是静默的——没有可识别的项目文件时直接退出；`init-project` 总是交互式。两者都不会覆盖已存在的 `.mise.toml` / `.tool-versions`。
 
 ### Workspace 构建
 

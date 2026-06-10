@@ -65,6 +65,10 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 ENV MISE_DATA_DIR=${WORKSPACE_HOME}/.local/share/mise
 ENV MISE_CONFIG_DIR=${WORKSPACE_HOME}/.config/mise
 ENV MISE_CACHE_DIR=${WORKSPACE_HOME}/.cache/mise
+# Auto-install missing tools the first time a project directory is entered.
+# Pairs with the chpwd hook that runs `detect-stack .` so freshly-cloned
+# projects get their .mise.toml + installed toolchain without any manual step.
+ENV MISE_AUTO_INSTALL=true
 
 # homebrew paths
 ENV HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew
@@ -181,6 +185,18 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
     '# mise activation' \
     'eval "$(/usr/local/bin/mise activate zsh)"' \
     '' \
+    '# auto-detect project stack on cd — generates .mise.toml from' \
+    '# package.json / go.mod / Cargo.toml / composer.json / pyproject.toml' \
+    '# and lets MISE_AUTO_INSTALL=true do the rest. Set MISED_SKIP_DETECT=1' \
+    '# to silence this hook (e.g. for a project that intentionally has no config).' \
+    'detect_stack_on_cd() {' \
+    '  [ -n "${MISED_SKIP_DETECT:-}" ] && return' \
+    '  [ -f .mise.toml ] || [ -f .tool-versions ] && return' \
+    '  command -v detect-stack >/dev/null 2>&1 || return' \
+    '  detect-stack . >/dev/null 2>&1' \
+    '}' \
+    'chpwd_functions+=(detect_stack_on_cd)' \
+    '' \
     '# homebrew shellenv' \
     'if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi' \
     'source "$ZSH/oh-my-zsh.sh"' \
@@ -204,7 +220,9 @@ RUN if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
 # Final Touch & Entrypoint
 ###########################################################################
 
-COPY --chmod=755 workspaces/docker-entrypoint.sh /usr/local/bin/workspace-entrypoint
+COPY --chmod=755 workspaces/docker-entrypoint.sh        /usr/local/bin/workspace-entrypoint
+COPY --chmod=755 workspaces/scripts/detect-stack.sh    /usr/local/bin/detect-stack
+COPY --chmod=755 workspaces/scripts/init-project.sh    /usr/local/bin/init-project
 
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
