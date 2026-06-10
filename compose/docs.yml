@@ -1,0 +1,51 @@
+#--------------------------------------------------------------------------
+# API Documentation Tools
+# Includes: Swagger Editor, Swagger UI
+#--------------------------------------------------------------------------
+
+services:
+  ### SWAGGER EDITOR ############################################
+  swagger-editor:
+    profiles: ["docs", "swagger-editor"]
+    image: swaggerapi/swagger-editor:${SWAGGER_EDITOR_VERSION}
+    ports:
+      - ${SWAGGER_EDITOR_PORT}:8080
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.swagger-editor.rule=Host(`swagger-editor.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.swagger-editor.entrypoints=http"
+      - "traefik.http.services.swagger-editor.loadbalancer.server.port=8080"
+    restart: always
+
+  ### SWAGGER UI ################################################
+  swagger-ui:
+    profiles: ["docs", "swagger-ui"]
+    image: swaggerapi/swagger-ui:${SWAGGER_UI_VERSION}
+    environment:
+      - API_URL=${SWAGGER_API_URL}
+    ports:
+      - ${SWAGGER_UI_PORT}:8080
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.swagger-ui.rule=Host(`swagger-ui.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.swagger-ui.entrypoints=http"
+      - "traefik.http.services.swagger-ui.loadbalancer.server.port=8080"
+    restart: always

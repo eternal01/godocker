@@ -38,21 +38,21 @@ scrape_configs:
           # job: "gateway-api",
           app: 'gateway-api'
           env: 'local'
-          instance: "127.0.0.1:8999"
+          instance: "workspace:8888"
 
       - targets: ['workspace:9601']
         labels:
           # job: "basic-rpc",
           app: 'basic-rpc'
           env: 'local'
-          instance: "127.0.0.1:9601"
+          instance: "workspace:9501"
 
       - targets: ['workspace:9602']
         labels:
           # job: "account-rpc",
           app: 'account-rpc'
           env: 'local'
-          instance: "127.0.0.1:9602"
+          instance: "workspace:9502"
           
 
 

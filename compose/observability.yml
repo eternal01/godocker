@@ -1,0 +1,201 @@
+#--------------------------------------------------------------------------
+# Observability Stack
+# Includes: Elasticsearch, Logstash, Kibana, Grafana, Prometheus, Jaeger
+#--------------------------------------------------------------------------
+
+services:
+  ### ElasticSearch ########################################
+  elasticsearch:
+    profiles: ["observability", "elasticsearch", "elk", "go-env"]
+    build:
+      context: ./elasticsearch
+      dockerfile: Dockerfile
+      args:
+        - ELK_VERSION=${ELK_VERSION}
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    environment:
+      - cluster.name=godocker-cluster
+      - node.name=godocker-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - indices.id_field_data.enabled=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.initial_master_nodes=godocker-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${ELASTICSEARCH_HOST_HTTP_PORT}:9200"
+      - "${ELASTICSEARCH_HOST_TRANSPORT_PORT}:9300"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.elasticsearch.rule=Host(`elasticsearch.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.elasticsearch.entrypoints=http"
+      - "traefik.http.services.elasticsearch.loadbalancer.server.port=9200"
+    restart: always
+
+  ### Logstash ##############################################
+  logstash:
+    profiles: ["observability", "logstash", "elk"]
+    build:
+      context: ./logstash
+      dockerfile: Dockerfile
+      args:
+        - ELK_VERSION=${ELK_VERSION}
+    volumes:
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    ports:
+      - "5001:5001"
+    environment:
+      LS_JAVA_OPTS: "-Xmx1g -Xms1g"
+    env_file:
+      - ./.env
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9600/_node/stats || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.logstash.rule=Host(`logstash.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.logstash.entrypoints=http"
+      - "traefik.http.services.logstash.loadbalancer.server.port=9600"
+    restart: always
+
+  ### Kibana ##############################################
+  kibana:
+    profiles: ["observability", "kibana", "elk"]
+    build:
+      context: ./kibana
+      dockerfile: Dockerfile
+      args:
+        - ELK_VERSION=${ELK_VERSION}
+    ports:
+      - "${KIBANA_HTTP_PORT}:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.kibana.rule=Host(`kibana.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.kibana.entrypoints=http"
+      - "traefik.http.services.kibana.loadbalancer.server.port=5601"
+    restart: always
+
+  ### Grafana ################################################
+  grafana:
+    profiles: ["observability", "grafana", "go-env"]
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
+      args:
+        - GRAFANA_VERSION=${GRAFANA_VERSION}
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.grafana.entrypoints=http"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    restart: always
+
+  ### Prometheus #########################################
+  prometheus:
+    profiles: ["observability", "prometheus", "go-env"]
+    build:
+      context: ./prometheus
+      dockerfile: Dockerfile
+      args:
+        - PROMETHEUS_VERSION=${PROMETHEUS_VERSION}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.prometheus.entrypoints=http"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    restart: always
+
+  ### Jaeger #########################################
+  jaeger:
+    profiles: ["observability", "jaeger", "go-env"]
+    build:
+      context: ./jaeger
+      dockerfile: Dockerfile
+      args:
+        - JAEGER_VERSION=${JAEGER_VERSION}
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "${JAEGER_PORT}:16686"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:14269/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.jaeger.rule=Host(`jaeger.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.jaeger.entrypoints=http"
+      - "traefik.http.services.jaeger.loadbalancer.server.port=16686"
+    restart: always

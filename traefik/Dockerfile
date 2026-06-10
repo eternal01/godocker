@@ -1,4 +1,5 @@
-FROM traefik:v2.2
+ARG TRAEFIK_VERSION
+FROM traefik:${TRAEFIK_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
 

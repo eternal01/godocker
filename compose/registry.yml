@@ -1,0 +1,103 @@
+#--------------------------------------------------------------------------
+# Registry & Coordination Services
+# Includes: etcd, etcd-manager, DTM
+#--------------------------------------------------------------------------
+
+services:
+  ### Etcd ##################################
+  etcd:
+    profiles: ["registry", "etcd", "go-env"]
+    build:
+      context: ./etcd
+      dockerfile: Dockerfile
+      args:
+        - ETCD_VERSION=${ETCD_VERSION}
+    environment:
+      - TZ=${TZ}
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+    ports:
+      - "${ETCD_PORT}:2379"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.etcd.rule=Host(`etcd.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.etcd.entrypoints=http"
+      - "traefik.http.services.etcd.loadbalancer.server.port=2379"
+    restart: always
+
+  ### Etcd-manager ##################################
+  etcd-manager:
+    profiles: ["registry", "etcd-manager", "go-env"]
+    build:
+      context: ./etcd-manager
+      dockerfile: Dockerfile
+      args:
+        - ETCD_MANAGER_VERSION=${ETCD_MANAGER_VERSION}
+    environment:
+      - TZ=${TZ}
+    ports:
+      - "${ETCD_MANAGER_PORT}:8080"
+    depends_on:
+      - etcd
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      # etcdkeeper is a static UI that reads etcd directly; it has no
+      # /health endpoint. Hit the root (the UI page) — 200 means up.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.etcd-manager.rule=Host(`etcd-manager.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.etcd-manager.entrypoints=http"
+      - "traefik.http.services.etcd-manager.loadbalancer.server.port=8080"
+    restart: always
+
+  ### DTM #########################################
+  dtm:
+    image: yedf/dtm:${DTM_VERSION}
+    profiles: ["registry", "dtm", "go-env"]
+    environment:
+      - TZ=${TZ}
+    entrypoint:
+      - "/app/dtm/dtm"
+      - "-c=/app/dtm/configs/config.yaml"
+    volumes:
+      - ./dtm/config.yml:/app/dtm/configs/config.yaml
+    ports:
+      - "${DTM_HTTP_PORT}:36789"
+      - "${DTM_GRPC_PORT}:36790"
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      # dtm v1.18 doesn't expose /api/healthy. Any 200 from the HTTP
+      # listener (port 36789) means the server is up; the root returns
+      # a static page.
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:36789/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.dtm.rule=Host(`dtm.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.dtm.entrypoints=http"
+      - "traefik.http.services.dtm.loadbalancer.server.port=36789"
+    restart: always

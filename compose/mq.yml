@@ -1,0 +1,118 @@
+#--------------------------------------------------------------------------
+# Message Queue Services
+# Includes: RabbitMQ, Kafka (KRaft), Kafka UI
+#--------------------------------------------------------------------------
+# Notes:
+#   - Kafka 采用 apache/kafka 3.8.0 + KRaft 模式（无 Zookeeper）
+#   - 旧 wurstmeister/kafka + sheepkiller/kafka-manager + Zookeeper 已弃用
+#   - 旧 bitnami/kafka 已弃用：1ms.run / daocloud 均不再镜像 bitnami 仓库
+#   - kafka 容器内监听 9092（broker）+ 9093（controller），仅 9092 对外暴露
+#   - ADVERTISED_LISTENERS 写 "kafka:9092"，容器间通过服务名互通
+#   - apache/kafka 镜像默认以 appuser 启动；这里以 root 跑避免宿主 bind
+#     挂载的 ~/.development-docker/data/kafka 出现属主不一致
+#--------------------------------------------------------------------------
+
+services:
+  ### RabbitMQ #############################################
+  rabbitmq:
+    profiles: ["mq", "rabbitmq", "php-env"]
+    build:
+      context: ./rabbitmq
+      dockerfile: Dockerfile
+      args:
+        - RABBITMQ_VERSION=${RABBITMQ_VERSION}
+    ports:
+      - "${RABBITMQ_NODE_HOST_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672"
+      - "${RABBITMQ_MANAGEMENT_HTTPS_HOST_PORT}:15671"
+      - "${RABBITMQ_WEB_STOMP_HOST_PORT}:15674"
+    privileged: true
+    hostname: godocker-rabbitmq
+    volumes:
+      - ${DATA_PATH_HOST}/rabbitmq:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ./rabbitmq/management_agent.disable_metrics_collector.conf:/etc/rabbitmq/conf.d/management_agent.disable_metrics_collector.conf
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.rabbitmq.entrypoints=http"
+      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+    restart: always
+
+  ### Kafka ################################################
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION}
+    profiles: ["mq", "kafka", "go-env"]
+    user: "0:0"
+    ports:
+      - "${KAFKA_PORT}:9092"
+    environment:
+      # KRaft single-node cluster. Apache upstream image maps env vars
+      # directly to server properties (no _CFG_ infix like bitnami).
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_MESSAGE_MAX_BYTES: "2000000"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH_HOST}/kafka:/var/lib/kafka/data
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: always
+
+  ### Kafka UI ##############################################
+  kafka-ui:
+    image: provectuslabs/kafka-ui:${KAFKA_UI_VERSION}
+    profiles: ["mq", "kafka-ui", "go-env"]
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+      DYNAMIC_CONFIG_ENABLED: "true"
+      TZ: ${TZ}
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      # kafka-ui v0.7.2 exposes Spring Boot's actuator at /actuator/health
+      # (returns {"status":"UP"}). The /api/clusters/local path the
+      # original config used doesn't exist on this version.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.kafka-ui.rule=Host(`kafka-ui.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.kafka-ui.entrypoints=http"
+      - "traefik.http.services.kafka-ui.loadbalancer.server.port=8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: always

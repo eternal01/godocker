@@ -36,11 +36,14 @@
 #   DataExpire: 604800 # Trans 过期时间
 #   RedisPrefix: '{}'  # Redis 存储前缀
 
-# 微服务
-MicroService:
-  Driver: 'dtm-driver-gozero'           # 要处理注册/发现的驱动程序的名称
-  Target: 'etcd://etcd:2379/dtmservice' # 注册 dtm 服务的 etcd 地址
-  EndPoint: 'dtm:36790'
+# 微服务 — the official yedf/dtm binary doesn't ship the
+# 'dtm-driver-docker' plugin. For local dev (no service discovery
+# needed), leave MicroService unconfigured. To re-enable, build a
+# custom dtm image with the plugin and set Driver to its registered name.
+# MicroService:
+#   Driver: 'default'
+#   Target: 'etcd://etcd:2379/dtm-service'
+#   EndPoint: 'dtm:36790'
 
 # 以下配置的单位为'秒'
 # TransCronInterval: 3
@@ -48,4 +51,4 @@ MicroService:
 # RetryInterval: 10
 
 # 日志等级
-# LogLevel: 'info' 
+# LogLevel: 'info'  

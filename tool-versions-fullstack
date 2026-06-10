@@ -1,0 +1,5 @@
+# Fullstack development environment
+go 1.23.4
+rust stable
+php 8.3.10
+node 22.12.0

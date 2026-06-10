@@ -1,0 +1,41 @@
+#--------------------------------------------------------------------------
+# Storage Services
+# Includes: MinIO
+#--------------------------------------------------------------------------
+
+services:
+  ### MinIO ################################################
+  minio:
+    profiles: ["storage", "minio", "go-env"]
+    build:
+      context: ./minio
+      dockerfile: Dockerfile
+      args:
+        - MINIO_VERSION=${MINIO_VERSION}
+    volumes:
+      - ${DATA_PATH_HOST}/minio/data:/export
+      - ${DATA_PATH_HOST}/minio/config:/root/.minio
+    ports:
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.minio.rule=Host(`minio.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.minio.entrypoints=http"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+      - "traefik.http.routers.minio-console.rule=Host(`minio-console.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.minio-console.entrypoints=http"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    restart: always

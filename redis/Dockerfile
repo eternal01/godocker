@@ -1,3 +1,4 @@
+ARG REDIS_VERSION
 FROM redis:${REDIS_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"

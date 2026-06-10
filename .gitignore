@@ -1,2 +1,8 @@
 !.gitignore
 .DS_Store
+.env
+.idea/
+.claude/
+logs/
+data/
+traefik/data/acme.json

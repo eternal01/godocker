@@ -1,0 +1,109 @@
+#--------------------------------------------------------------------------
+# CI / Management Tools
+# Includes: GitLab, GitLab Runner, Portainer
+# NOTE: GitLab depends on PostgreSQL and Redis (start via compose/db.yml and compose/cache.yml)
+#--------------------------------------------------------------------------
+
+services:
+  ### Gitlab ################################################
+  gitlab:
+    profiles: ["ci", "gitlab"]
+    build:
+      context: ./gitlab
+      dockerfile: Dockerfile
+      args:
+        - GITLAB_VERSION=${GITLAB_VERSION}
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url '${GITLAB_DOMAIN_NAME}'
+        redis['enable'] = false
+        nginx['listen_https'] = false
+        nginx['listen_port'] = 80
+        nginx['custom_gitlab_server_config'] = "set_real_ip_from 172.0.0.0/8;\nreal_ip_header X-Real-IP;\nreal_ip_recursive on;"
+        postgresql['enable'] = false
+        gitlab_rails['trusted_proxies'] = ['caddy','nginx','apache2']
+        gitlab_rails['redis_host'] = 'redis'
+        gitlab_rails['redis_database'] = 8
+        gitlab_rails['db_host'] = '${GITLAB_POSTGRES_HOST}'
+        gitlab_rails['db_username'] = '${GITLAB_POSTGRES_USER}'
+        gitlab_rails['db_password'] = '${GITLAB_POSTGRES_PASSWORD}'
+        gitlab_rails['db_database'] = '${GITLAB_POSTGRES_DB}'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_HOST_SSH_PORT}
+    volumes:
+      - ${DATA_PATH_HOST}/gitlab/config:/etc/gitlab
+      - ${DATA_PATH_HOST}/gitlab/data:/var/opt/gitlab
+      - ${GITLAB_HOST_LOG_PATH}:/var/log/gitlab
+    ports:
+      - "${GITLAB_HOST_HTTP_PORT}:80"
+      - "${GITLAB_HOST_HTTPS_PORT}:443"
+      - "${GITLAB_HOST_SSH_PORT}:22"
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost/-/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.gitlab.rule=Host(`gitlab.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.gitlab.entrypoints=http"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=80"
+    restart: always
+
+  ### Gitlab-runner #########################################
+  gitlab-runner:
+    profiles: ["ci", "gitlab-runner"]
+    image: gitlab/gitlab-runner:${GITLAB_RUNNER_VERSION}
+    environment:
+      - CI_SERVER_URL=${GITLAB_CI_SERVER_URL}
+      - REGISTRATION_TOKEN=${GITLAB_RUNNER_REGISTRATION_TOKEN}
+      - RUNNER_NAME=${COMPOSE_PROJECT_NAME}-runner
+      - REGISTER_NON_INTERACTIVE=${GITLAB_REGISTER_NON_INTERACTIVE}
+      - RUNNER_EXECUTOR=${GITLAB_RUNNER_EXECUTOR}
+    volumes:
+      - ${DATA_PATH_HOST}/gitlab/runner:/etc/gitlab-runner
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    networks:
+      - frontend
+      - backend
+    restart: always
+
+  ### Portainer ################################################
+  portainer:
+    profiles: ["ci", "portainer"]
+    build:
+      context: ./portainer
+      dockerfile: Dockerfile
+      args:
+        - PORTAINER_VERSION=${PORTAINER_VERSION}
+    volumes:
+      - ${DATA_PATH_HOST}/portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "dockerhost:${DOCKER_HOST_IP}"
+    ports:
+      - "${PORTAINER_HOST_PORT}:9000"
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9000/api/status || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-false}"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.portainer.entrypoints=http"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    restart: always

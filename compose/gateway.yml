@@ -1,0 +1,50 @@
+#--------------------------------------------------------------------------
+# Gateway Services
+# Includes: Traefik
+#--------------------------------------------------------------------------
+
+services:
+  ### TRAEFIK #########################################
+  traefik:
+    profiles: ["gateway", "traefik"]
+    build:
+      context: ./traefik
+      dockerfile: Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik/data:/data
+    command:
+      - "--api"
+      - "--providers.docker.exposedbydefault=false"
+      - "--accesslog.filepath=/data/access.log"
+      - "--entrypoints.http.address=:${TRAEFIK_HOST_HTTP_PORT}"
+      - "--entrypoints.http.http.redirections.entrypoint.to=https"
+      - "--entrypoints.https.address=:${TRAEFIK_HOST_HTTPS_PORT}"
+      - "--entrypoints.traefik.address=:${TRAEFIK_DASHBOARD_PORT}"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/data/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http"
+    ports:
+      - "${TRAEFIK_HOST_HTTP_PORT}:${TRAEFIK_HOST_HTTP_PORT}"
+      - "${TRAEFIK_HOST_HTTPS_PORT}:${TRAEFIK_HOST_HTTPS_PORT}"
+      - "${TRAEFIK_DASHBOARD_PORT}:${TRAEFIK_DASHBOARD_PORT}"
+    networks:
+      - frontend
+      - backend
+    labels:
+      # Dashboard 始终通过 Traefik 暴露（不受 TRAEFIK_ENABLE 开关影响）
+      # 本地开发：访问 http://traefik.${TRAEFIK_DOMAIN}:8888
+      # 注意：默认带 TLS 配置仅在 ACME 真实域名下生效；本地请通过端口访问
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.traefik.entrypoints=traefik"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.middlewares.access-auth.basicauth.realm=Login Required"
+      - "traefik.http.middlewares.access-auth.basicauth.users=${TRAEFIK_DASHBOARD_USER}"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: always
