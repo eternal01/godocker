@@ -18,9 +18,7 @@ networks:
 volumes:
   workspace-mise-cache:
     driver: ${VOLUMES_DRIVER}
-  workspace-mise-data:
-    driver: ${VOLUMES_DRIVER}
-  workspace-brew:
+  workspace-brew-cache:
     driver: ${VOLUMES_DRIVER}
   workspace-cargo-registry:
     driver: ${VOLUMES_DRIVER}
@@ -49,12 +47,12 @@ services:
   workspace:
     build:
       context: .
-      dockerfile: workspaces/base.Dockerfile
-      # `network: host` lets the build container reach the host's proxy on
-      # 127.0.0.1 (otherwise it would resolve to the container's own loopback).
-      # Leave unset in environments where you don't want the build to share
-      # the host's network namespace.
-      network: host
+      dockerfile: workspaces/workspace.Dockerfile
+      # Use the normal build network by default. Set WORKSPACE_BUILD_NETWORK=host
+      # only when the proxy listens on 127.0.0.1 on the Docker host.
+      network: ${WORKSPACE_BUILD_NETWORK}
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
       args:
         - SYSTEM_NAME=${SYSTEM_NAME}
         - SYSTEM_VERSION=${SYSTEM_VERSION}
@@ -66,6 +64,7 @@ services:
         - WORKSPACE_INSTALL_DNSUTILS=${WORKSPACE_INSTALL_DNSUTILS}
         - WORKSPACE_INSTALL_WORKSPACE_SSH=${WORKSPACE_INSTALL_WORKSPACE_SSH}
         - WORKSPACE_BREW_PACKAGES=${WORKSPACE_BREW_PACKAGES}
+        - MISE_VERSION=${MISE_VERSION}
         - PUID=${WORKSPACE_PUID}
         - PGID=${WORKSPACE_PGID}
         - TZ=${TZ}
@@ -74,19 +73,20 @@ services:
         - NO_PROXY=${NO_PROXY}
     volumes:
       - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
-      # mise data, shims, and cache
-      - workspace-mise-data:${WORKSPACE_HOME}/.local/share/mise
+      # Keep cache persistent, but keep mise installs in the image layer so
+      # build-time preinstallation is not hidden by an empty volume.
       - workspace-mise-cache:${WORKSPACE_HOME}/.cache/mise
       # language-specific caches
       - workspace-go-mod:${WORKSPACE_HOME}/go/pkg/mod
       - workspace-cargo-registry:${WORKSPACE_HOME}/.cargo/registry
       - workspace-cargo-git:${WORKSPACE_HOME}/.cargo/git
       - workspace-composer:${WORKSPACE_HOME}/.composer
-      # homebrew installations
-      - workspace-brew:/home/linuxbrew/.linuxbrew
+      # Keep Homebrew downloads persistent, but do not overlay its prefix.
+      - workspace-brew-cache:/home/linuxbrew/.cache/Homebrew
     extra_hosts:
-      - "dockerhost:${DOCKER_HOST_IP}"
-      # Allow workspace to reach a proxy on the host (when not using host network).
+      # Allow workspace to reach a proxy / host services on the host. Linux
+      # Docker (no host.docker.internal by default) still resolves via the
+      # host-gateway magic IP since Compose v2.
       - "host.docker.internal:host-gateway"
     environment:
       # Propagate proxy to go install / pip / brew / curl / etc. inside the
@@ -97,6 +97,7 @@ services:
       - http_proxy=${HTTP_PROXY}
       - https_proxy=${HTTPS_PROXY}
       - no_proxy=${NO_PROXY}
+      - WORKSPACE_AUTO_DETECT=${WORKSPACE_AUTO_DETECT}
     ports:
       - "${WORKSPACE_SSH_PORT}:22"
       - "${WORKSPACE_SERVE_HOST_PORT}:1080"

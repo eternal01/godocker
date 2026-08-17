@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 # Detect a project's language stack and emit a .mise.toml when none exists.
 #
-# Invoked automatically by the zsh chpwd hook installed in base.Dockerfile.
+# Invoked explicitly by init-project or by the opt-in zsh chpwd hook.
 # Exits 0 in all cases — a silent no-op when the project is already configured
 # or no recognisable project files are present.
 #
-# Recognised files → default tool version:
-#   package.json       → node  = "22"   (engines.node wins when present and parseable)
-#   go.mod             → go    = <version from `go ` directive, else "1.23">
-#   Cargo.toml         → rust  = "stable"  (rust-version wins when present)
-#   composer.json      → php   = "8.3"   (require.php wins when present)
-#   pyproject.toml     → python = "3.12"  (requires-python wins when present)
-#   requirements.txt   → python = "3.12"  (no version pinning possible)
+# Recognised files → default tool version (overrides live in
+# scripts/languages.defaults, sourced below):
+#   package.json       → node    (engines.node wins when parseable)
+#   go.mod             → go      (`go ` directive wins, else defaults.go)
+#   Cargo.toml         → rust    (rust-version wins, else defaults.rust)
+#   composer.json      → php     (require.php wins, else defaults.php)
+#   pyproject.toml     → python  (requires-python wins, else defaults.python)
+#   requirements.txt   → python  (defaults.python — no version pinning possible)
 #
 # Usage: detect-stack [dir]  (default: .)
 
 set -u
 set -o pipefail
+
+# Single source of truth for default language versions — see the file for
+# the rationale. Fail closed (script errors out) if it's missing rather
+# than silently using unset defaults.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./languages.defaults
+. "$SCRIPT_DIR/languages.defaults"
+. "$SCRIPT_DIR/stack-detection.lib.sh"
 
 target="${1:-.}"
 if ! cd "$target" 2>/dev/null; then
@@ -36,69 +45,7 @@ for f in package.json go.mod Cargo.toml composer.json pyproject.toml requirement
 done
 [ "$has_project_file" -eq 0 ] && exit 0
 
-# Parallel arrays (portable across bash 3.2 / 4 / 5 — the workspace container
-# has bash 5, but keeping it portable lets the host run it for testing).
-detected_tools=()
-detected_versions=()
-
-# --- node -------------------------------------------------------------------
-if [ -f package.json ]; then
-  node_ver=""
-  if command -v jq >/dev/null 2>&1; then
-    raw=$(jq -r '.engines.node // empty' package.json 2>/dev/null || true)
-    if [ -n "$raw" ] && [ "$raw" != "null" ]; then
-      # Strip range specifiers (^ ~ >= <=) and take the leading x.y as a
-      # major.minor fallback. mise accepts `20` as a major-only pin.
-      cleaned=$(printf '%s' "$raw" | tr -d '"' | sed -E 's/[\^~><= ]//g')
-      node_ver=$(printf '%s' "$cleaned" | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  detected_tools+=("node")
-  detected_versions+=("${node_ver:-22}")
-fi
-
-# --- go ---------------------------------------------------------------------
-if [ -f go.mod ]; then
-  go_ver=$(awk '/^go[[:space:]]/{print $2; exit}' go.mod 2>/dev/null)
-  detected_tools+=("go")
-  detected_versions+=("${go_ver:-1.23}")
-fi
-
-# --- rust -------------------------------------------------------------------
-if [ -f Cargo.toml ]; then
-  rust_ver=""
-  if grep -qE '^[[:space:]]*rust-version' Cargo.toml 2>/dev/null; then
-    rust_ver=$(awk -F'"' '/^[[:space:]]*rust-version/ {print $2; exit}' Cargo.toml 2>/dev/null)
-  fi
-  detected_tools+=("rust")
-  detected_versions+=("${rust_ver:-stable}")
-fi
-
-# --- php --------------------------------------------------------------------
-if [ -f composer.json ]; then
-  php_ver=""
-  if command -v jq >/dev/null 2>&1; then
-    raw=$(jq -r '.require.php // empty' composer.json 2>/dev/null || true)
-    if [ -n "$raw" ] && [ "$raw" != "null" ]; then
-      php_ver=$(printf '%s' "$raw" | tr -d '"' | sed -E 's/[\^~><= ]//g' | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  detected_tools+=("php")
-  detected_versions+=("${php_ver:-8.3}")
-fi
-
-# --- python -----------------------------------------------------------------
-if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-  py_ver=""
-  if [ -f pyproject.toml ]; then
-    raw=$(awk -F'"' '/requires-python/ {print $2; exit}' pyproject.toml 2>/dev/null)
-    if [ -n "$raw" ]; then
-      py_ver=$(printf '%s' "$raw" | sed -E 's/[<>=~^ ]//g' | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  detected_tools+=("python")
-  detected_versions+=("${py_ver:-3.12}")
-fi
+detect_project_stack
 
 [ "${#detected_tools[@]}" -eq 0 ] && exit 0
 
@@ -118,9 +65,17 @@ out=".mise.toml"
 printf '[detect-stack] generated %s:\n' "$out"
 cat "$out"
 
-# Kick mise so the freshly-written file is picked up on the current shell.
-# `MISE_AUTO_INSTALL=true` makes this non-blocking for already-installed
-# versions and lazy for new ones.
-if command -v mise >/dev/null 2>&1; then
+# Gated install: only auto-install when the user has explicitly opted in via
+# MISE_AUTO_INSTALL=true. Default in the workspace image is `false` because
+# casually `cd`-ing into a Rust project while writing Go (or vice versa)
+# would otherwise trigger a download you didn't ask for. For migration
+# scenarios (cloning a fresh repo, environment bootstrap), flip the var
+# on for the session:
+#
+#   export MISE_AUTO_INSTALL=true   # then `cd` around and tools land on demand
+#
+# mise's own auto-install behaviour is the same switch — gating this call
+# to the same env var keeps "what runs install" in one place.
+if [ "${MISE_AUTO_INSTALL:-false}" = "true" ] && command -v mise >/dev/null 2>&1; then
   mise install --quiet 2>/dev/null || true
 fi

@@ -11,7 +11,7 @@
 #   go-env     workspace mysql mongo redis etcd etcd-manager dtm kafka \
 #              kafka-ui elasticsearch grafana prometheus jaeger
 #   php-env    workspace mysql redis rabbitmq
-#   full-env   <all services in the loaded compose files>
+#   full-env   all services except the mutually-exclusive PostGIS variant
 #   custom     <no defaults, services required>
 #
 # Mechanics:
@@ -19,8 +19,8 @@
 #     COMPOSE_PROFILES so the services' own profile tags in compose/*.yml
 #     are activated. workspace has no profile; it starts because it is
 #     named explicitly in `up -d`.
-#   - full-env and custom-with-no-services both omit the profile filter
-#     so every service in the loaded compose files comes up.
+#   - full-env uses an explicit service list so mutually-exclusive database
+#     variants do not start together.
 #--------------------------------------------------------------------------
 
 set -euo pipefail
@@ -53,7 +53,7 @@ case "$PRESET" in
   rust-env) DEFAULTS="workspace mysql postgres redis" ;;
   go-env)   DEFAULTS="workspace mysql mongo redis etcd etcd-manager dtm kafka kafka-ui elasticsearch grafana prometheus jaeger" ;;
   php-env)  DEFAULTS="workspace mysql redis rabbitmq" ;;
-  full-env) DEFAULTS="" ;;
+  full-env) DEFAULTS="workspace mysql postgres mongo redis rabbitmq kafka kafka-ui etcd etcd-manager dtm elasticsearch logstash kibana minio grafana prometheus jaeger gitlab gitlab-runner portainer traefik swagger-editor swagger-ui" ;;
   custom)   DEFAULTS="" ;;
   *)        echo "Unknown preset: $PRESET" >&2
             echo "Valid presets: rust-env | go-env | php-env | full-env | custom" >&2
@@ -113,7 +113,6 @@ if [ -n "$SERVICES" ]; then
   COMPOSE_PROFILES="$PROFILES" pull_with_retry docker compose "${COMPOSE_FILES[@]}" pull --policy always
   COMPOSE_PROFILES="$PROFILES" docker compose "${COMPOSE_FILES[@]}" up -d $SERVICES
 else
-  echo "→ [$PRESET] starting everything"
-  pull_with_retry docker compose "${COMPOSE_FILES[@]}" pull --policy always
-  docker compose "${COMPOSE_FILES[@]}" up -d
+  echo "→ [$PRESET] no services selected"
+  exit 1
 fi

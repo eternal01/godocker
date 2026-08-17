@@ -1,5 +1,5 @@
 #--------------------------------------------------------------------------
-# Base Development Workspace
+# Development Workspace
 #--------------------------------------------------------------------------
 # 职责：提供 100% 通用的开发"壳"，不含任何语言运行时
 # 语言运行时通过 mise 在构建时或启动时按需安装
@@ -10,7 +10,7 @@ ARG SYSTEM_VERSION=bookworm
 FROM ${SYSTEM_NAME}:${SYSTEM_VERSION}
 
 LABEL maintainer="muxk <361087696@qq.com>"
-LABEL description="Base development workspace with mise, homebrew, zsh"
+LABEL description="Development workspace with mise, homebrew, zsh"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -34,10 +34,7 @@ ARG WORKSPACE_BREW_PACKAGES="jq yq ripgrep fzf tree tmux fd neovim"
 
 # mise pre-installed languages at build time (e.g. "go@1.22.4 rust@stable php@8.3.6")
 ARG WORKSPACE_PREINSTALL_LANGUAGES=""
-# Pin mise to a specific release. The literal "latest" does NOT work — the
-# installer concatenates the value directly into the GitHub release URL, so
-# "latest" produces /releases/download/vlatest/... which 404s. To upgrade,
-# bump this line and rebuild.
+# Pin mise to a specific release. Override through the Compose build arg.
 ARG MISE_VERSION=v2026.6.1
 
 # Proxy support: declared as ARG, exported as ENV (both upper- and lower-case so
@@ -53,6 +50,16 @@ ENV TZ=${TZ}
 ENV WORKSPACE_USER=${WORKSPACE_USER}
 ENV WORKSPACE_HOME=${WORKSPACE_HOME}
 ENV WORKSPACE_PATH=${WORKSPACE_PATH}
+# Pin $SHELL so any process reading it (mise, oh-my-zsh, IDEs that fall
+# back to the env var) sees /bin/zsh. Pairs with useradd -s /bin/zsh above
+# and the host-side VSCode setting terminal.integrated.defaultProfile.linux.
+ENV SHELL=/bin/zsh
+# locale-gen above creates en_US.UTF-8; export it so Python / git / locale-
+# aware tools don't fall back to POSIX (which breaks `print('中文')` and
+# similar). LC_ALL is also exported so gettext-style tools pick the same
+# locale without per-tool override.
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
 
 ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
@@ -65,10 +72,10 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 ENV MISE_DATA_DIR=${WORKSPACE_HOME}/.local/share/mise
 ENV MISE_CONFIG_DIR=${WORKSPACE_HOME}/.config/mise
 ENV MISE_CACHE_DIR=${WORKSPACE_HOME}/.cache/mise
-# Auto-install missing tools the first time a project directory is entered.
-# Pairs with the chpwd hook that runs `detect-stack .` so freshly-cloned
-# projects get their .mise.toml + installed toolchain without any manual step.
-ENV MISE_AUTO_INSTALL=true
+# Project detection is explicit by default. Set WORKSPACE_AUTO_DETECT=true to
+# opt into generating .mise.toml on directory changes.
+ENV MISE_AUTO_INSTALL=false
+ENV WORKSPACE_AUTO_DETECT=false
 
 # homebrew paths
 ENV HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew
@@ -84,42 +91,52 @@ ENV HOMEBREW_NO_INSTALL_CLEANUP=1
 # Base System Tools
 ###########################################################################
 
+# Retry wrapper: apt-get returns exit code 100 when "Some files failed to
+# download" — a transient network blip against deb.debian.org shouldn't fail
+# the whole image build. `--fix-missing` keeps the install going when a single
+# .deb fails, and the for-loop retries the whole batch up to three times.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    bash \
-    binutils \
-    bison \
-    build-essential \
-    bzip2 \
-    ca-certificates \
-    curl \
-    file \
-    git \
-    gosu \
-    gnupg \
-    less \
-    locales \
-    make \
-    mercurial \
-    openssl \
-    patch \
-    pkg-config \
-    procps \
-    rsync \
-    screen \
-    socat \
-    sudo \
-    tar \
-    unzip \
-    vim \
-    wget \
-    xz-utils \
-    zip \
-    zsh \
-    zsh-syntax-highlighting \
+    && for i in 1 2 3; do \
+         apt-get install -y --no-install-recommends --fix-missing \
+         bash \
+         binutils \
+         bison \
+         build-essential \
+         bzip2 \
+         ca-certificates \
+         curl \
+         file \
+         git \
+         gosu \
+         gnupg \
+         less \
+         locales \
+         make \
+         mercurial \
+         openssl \
+         patch \
+         pkg-config \
+         procps \
+         rsync \
+         screen \
+         socat \
+         sudo \
+         tar \
+         unzip \
+         vim \
+         wget \
+         xz-utils \
+         zip \
+         zsh \
+         zsh-syntax-highlighting \
+         && break; \
+       done \
     && if [ "${WORKSPACE_INSTALL_DNSUTILS}" = "true" ]; then \
-    apt-get install -y --no-install-recommends dnsutils iputils-ping net-tools; \
-    fi \
+         apt-get install -y --no-install-recommends --fix-missing dnsutils iputils-ping net-tools; \
+       fi \
+    && if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
+         apt-get install -y --no-install-recommends --fix-missing openssh-server; \
+       fi \
     && ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
     && echo ${TZ} > /etc/timezone \
     && sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
@@ -134,10 +151,9 @@ RUN apt-get update \
 ###########################################################################
 
 RUN mkdir -p ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH} \
-    && curl https://mise.run | sh \
+    && curl -fsSL https://mise.run | MISE_VERSION="${MISE_VERSION}" sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise \
     && chmod +x /usr/local/bin/mise \
-    && mise trust -a \
     && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH}
 
 ###########################################################################
@@ -177,44 +193,21 @@ RUN if [ "${WORKSPACE_INSTALL_BREW}" = "true" ]; then \
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" -- \
     --unattended --keep-zshrc \
     && cp -R /root/.oh-my-zsh ${WORKSPACE_HOME}/.oh-my-zsh \
-    && printf '%s\n' \
-    'export ZSH="$HOME/.oh-my-zsh"' \
-    'ZSH_THEME="robbyrussell"' \
-    'plugins=(git)' \
-    '' \
-    '# mise activation' \
-    'eval "$(/usr/local/bin/mise activate zsh)"' \
-    '' \
-    '# auto-detect project stack on cd — generates .mise.toml from' \
-    '# package.json / go.mod / Cargo.toml / composer.json / pyproject.toml' \
-    '# and lets MISE_AUTO_INSTALL=true do the rest. Set MISED_SKIP_DETECT=1' \
-    '# to silence this hook (e.g. for a project that intentionally has no config).' \
-    'detect_stack_on_cd() {' \
-    '  [ -n "${MISED_SKIP_DETECT:-}" ] && return' \
-    '  [ -f .mise.toml ] || [ -f .tool-versions ] && return' \
-    '  command -v detect-stack >/dev/null 2>&1 || return' \
-    '  detect-stack . >/dev/null 2>&1' \
-    '}' \
-    'chpwd_functions+=(detect_stack_on_cd)' \
-    '' \
-    '# homebrew shellenv' \
-    'if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi' \
-    'source "$ZSH/oh-my-zsh.sh"' \
-    'source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh' \
-    > ${WORKSPACE_HOME}/.zshrc \
-    && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${WORKSPACE_HOME}/.oh-my-zsh ${WORKSPACE_HOME}/.zshrc
+    && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${WORKSPACE_HOME}/.oh-my-zsh
+
+# Source-controlled zsh config. Edited like any other file — diff lives in
+# git, no need to rebuild the image to tweak. Same content as the previous
+# inline printf; preserved verbatim so `cd` autocompletion, brew shellenv,
+# and detect_stack_on_cd keep working.
+COPY --chown=${WORKSPACE_USER}:${WORKSPACE_USER} --chmod=644 \
+    workspaces/dotfiles/.zshrc ${WORKSPACE_HOME}/.zshrc
 
 ###########################################################################
-# SSH (optional)
+# SSH (optional install handled by the apt block above; /run/sshd and
+# ${WORKSPACE_HOME}/.ssh are recreated by docker-entrypoint.sh at runtime
+# because /run is tmpfs in Debian and the build-time directory is gone on
+# the first container start).
 ###########################################################################
-
-RUN if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
-    apt-get update \
-    && apt-get install -y --no-install-recommends openssh-server \
-    && mkdir -p /run/sshd ${WORKSPACE_HOME}/.ssh \
-    && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${WORKSPACE_HOME}/.ssh \
-    && chmod 700 ${WORKSPACE_HOME}/.ssh; \
-    fi
 
 ###########################################################################
 # Final Touch & Entrypoint
@@ -223,11 +216,12 @@ RUN if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
 COPY --chmod=755 workspaces/docker-entrypoint.sh        /usr/local/bin/workspace-entrypoint
 COPY --chmod=755 workspaces/scripts/detect-stack.sh    /usr/local/bin/detect-stack
 COPY --chmod=755 workspaces/scripts/init-project.sh    /usr/local/bin/init-project
+COPY --chmod=644 workspaces/scripts/languages.defaults /usr/local/bin/languages.defaults
+COPY --chmod=644 workspaces/scripts/stack-detection.lib.sh /usr/local/bin/stack-detection.lib.sh
 
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
-    && rm -f /var/log/lastlog /var/log/faillog \
-    && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${WORKSPACE_HOME}
+    && rm -f /var/log/lastlog /var/log/faillog
 
 WORKDIR ${WORKSPACE_PATH}
 

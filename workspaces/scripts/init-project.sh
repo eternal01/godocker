@@ -9,6 +9,13 @@
 set -u
 set -o pipefail
 
+# Default language versions live in ./languages.defaults — same file
+# detect-stack.sh sources. Single source of truth.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./languages.defaults
+. "$SCRIPT_DIR/languages.defaults"
+. "$SCRIPT_DIR/stack-detection.lib.sh"
+
 target="${1:-.}"
 if ! cd "$target" 2>/dev/null; then
   echo "✗ cannot cd to $target" >&2
@@ -21,57 +28,9 @@ if [ -f .mise.toml ] || [ -f .tool-versions ]; then
   exit 1
 fi
 
-# --- detection (kept in sync with detect-stack.sh; intentional duplication
-# avoids cross-script coupling for a 50-line routine) ---------------------
-declare -a tool_order=()
-declare -a tool_version=()
-
-if [ -f package.json ]; then
-  ver=""
-  if command -v jq >/dev/null 2>&1; then
-    raw=$(jq -r '.engines.node // empty' package.json 2>/dev/null || true)
-    if [ -n "$raw" ] && [ "$raw" != "null" ]; then
-      cleaned=$(printf '%s' "$raw" | tr -d '"' | sed -E 's/[\^~><= ]//g')
-      ver=$(printf '%s' "$cleaned" | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  tool_order+=("node"); tool_version+=("${ver:-22}")
-fi
-
-if [ -f go.mod ]; then
-  ver=$(awk '/^go[[:space:]]/{print $2; exit}' go.mod 2>/dev/null)
-  tool_order+=("go"); tool_version+=("${ver:-1.23}")
-fi
-
-if [ -f Cargo.toml ]; then
-  ver=""
-  if grep -qE '^[[:space:]]*rust-version' Cargo.toml 2>/dev/null; then
-    ver=$(awk -F'"' '/^[[:space:]]*rust-version/ {print $2; exit}' Cargo.toml 2>/dev/null)
-  fi
-  tool_order+=("rust"); tool_version+=("${ver:-stable}")
-fi
-
-if [ -f composer.json ]; then
-  ver=""
-  if command -v jq >/dev/null 2>&1; then
-    raw=$(jq -r '.require.php // empty' composer.json 2>/dev/null || true)
-    if [ -n "$raw" ] && [ "$raw" != "null" ]; then
-      ver=$(printf '%s' "$raw" | tr -d '"' | sed -E 's/[\^~><= ]//g' | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  tool_order+=("php"); tool_version+=("${ver:-8.3}")
-fi
-
-if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-  ver=""
-  if [ -f pyproject.toml ]; then
-    raw=$(awk -F'"' '/requires-python/ {print $2; exit}' pyproject.toml 2>/dev/null)
-    if [ -n "$raw" ]; then
-      ver=$(printf '%s' "$raw" | sed -E 's/[<>=~^ ]//g' | grep -Eo '^[0-9]+(\.[0-9]+)?' | head -n1)
-    fi
-  fi
-  tool_order+=("python"); tool_version+=("${ver:-3.12}")
-fi
+detect_project_stack
+tool_order=("${detected_tools[@]}")
+tool_version=("${detected_versions[@]}")
 
 # --- display + confirm ----------------------------------------------------
 printf '\n  Project: \033[1m%s\033[0m\n\n' "$(pwd)"

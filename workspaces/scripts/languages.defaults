@@ -1,0 +1,15 @@
+# Default language versions for detect-stack.sh and init-project.sh.
+#
+# When no project file pins a specific version, the scripts fall back to
+# these defaults. Override them when the ecosystem default changes (e.g.,
+# node 22 reaches EOL and the LTS bumps to 24) by editing this file alone.
+# Both scripts `source` this file at startup, so no further plumbing.
+#
+# Format: tool=version. Versions on the right are what `mise install <x>`
+# would accept — plain semver, "stable" for floating refs, etc.
+
+node=22
+go=1.23
+rust=stable
+php=8.3
+python=3.12

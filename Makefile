@@ -1,10 +1,10 @@
 COMPOSE ?= docker compose
-COMPOSE_FILES ?= -f docker-compose.yml
+COMPOSE_FILES ?= -f docker-compose.yml -f compose/db.yml -f compose/cache.yml -f compose/registry.yml -f compose/mq.yml -f compose/observability.yml -f compose/storage.yml -f compose/ci.yml -f compose/gateway.yml -f compose/docs.yml
 
 # Detect available compose files and build dynamic targets
 AVAILABLE_COMPOSES := $(wildcard compose/*.yml)
 
-.PHONY: help init build-base config up shell down ps logs \
+.PHONY: help init build-workspace config up shell down ps logs \
         db cache mq storage registry observability ci gateway docs \
         go-env rust-env php-env full-env dev check lock
 
@@ -29,10 +29,10 @@ help: ## Show this help message
 init: ## Initialize project: copy .env.example to .env, create data directory
 	@test -f .env || (cp .env.example .env && echo "Created .env from .env.example")
 	@test -d ~/codes || mkdir -p ~/codes && echo "Created ~/codes"
-	@mkdir -p $(DATA_PATH_HOST)
+	@mkdir -p "$${DATA_PATH_HOST:-$$HOME/.development-docker/data}"
 	@echo "Initialization complete. Review .env before starting services."
 
-build-base: ## Build the workspace-base image
+build-workspace: ## Build the workspace image
 	$(COMPOSE) build workspace
 
 config: ## Validate and print docker compose configuration
@@ -58,37 +58,40 @@ logs: ## Follow logs for all services
 #--------------------------------------------------------------------------
 
 db: ## Start database services (MySQL, Postgres, Mongo, PostGIS)
-	$(COMPOSE) -f docker-compose.yml -f compose/db.yml up -d
+	COMPOSE_PROFILES=db $(COMPOSE) $(COMPOSE_FILES) up -d
 
 cache: ## Start cache services (Redis)
-	$(COMPOSE) -f docker-compose.yml -f compose/cache.yml up -d
+	COMPOSE_PROFILES=cache $(COMPOSE) $(COMPOSE_FILES) up -d
 
 mq: ## Start message queue services (RabbitMQ, Kafka)
-	$(COMPOSE) -f docker-compose.yml -f compose/mq.yml up -d
+	COMPOSE_PROFILES=mq $(COMPOSE) $(COMPOSE_FILES) up -d
 
 storage: ## Start storage services (MinIO)
-	$(COMPOSE) -f docker-compose.yml -f compose/storage.yml up -d
+	COMPOSE_PROFILES=storage $(COMPOSE) $(COMPOSE_FILES) up -d
 
 registry: ## Start registry/coordination services (etcd, DTM)
-	$(COMPOSE) -f docker-compose.yml -f compose/registry.yml up -d
+	COMPOSE_PROFILES=registry $(COMPOSE) $(COMPOSE_FILES) up -d
 
 observability: ## Start observability stack (ELK, Grafana, Prometheus, Jaeger)
-	$(COMPOSE) -f docker-compose.yml -f compose/observability.yml up -d
+	COMPOSE_PROFILES=observability $(COMPOSE) $(COMPOSE_FILES) up -d
 
 ci: ## Start CI/management services (GitLab, Portainer) - requires Postgres + Redis
-	$(COMPOSE) -f docker-compose.yml -f compose/db.yml -f compose/cache.yml -f compose/ci.yml up -d
+	COMPOSE_PROFILES=ci,db,cache $(COMPOSE) $(COMPOSE_FILES) up -d
 
 gateway: ## Start gateway (Traefik) - dashboard only, services on host ports
-	$(COMPOSE) -f docker-compose.yml -f compose/gateway.yml up -d
+	COMPOSE_PROFILES=gateway $(COMPOSE) $(COMPOSE_FILES) up -d
 
 # Traefik opt-in 路由（需在 .env 设置 TRAEFIK_ENABLE=true）
 # 用法：make gateway-routed PROFILES="mysql redis kafka"
 gateway-routed: ## Start Traefik with service routing enabled (set TRAEFIK_ENABLE=true first)
-	@test "$$TRAEFIK_ENABLE" = "true" || (echo "❌ TRAEFIK_ENABLE must be set to 'true' in .env" && exit 1)
-	$(COMPOSE) -f docker-compose.yml -f compose/gateway.yml --profile $(PROFILES) up -d
+	@test -f .env || (echo "❌ .env not found; run 'make init' first" && exit 1)
+	@set -a; . ./.env; set +a; test "$$TRAEFIK_ENABLE" = "true" || (echo "❌ TRAEFIK_ENABLE must be set to 'true' in .env" && exit 1)
+	@test -n "$(PROFILES)" || (echo "❌ PROFILES must contain at least one service profile" && exit 1)
+	@set -a; . ./.env; set +a; PROFILES_CSV="$$(echo "$(PROFILES)" | tr ' ' ',')"; \
+	COMPOSE_PROFILES="gateway,$$PROFILES_CSV" $(COMPOSE) $(COMPOSE_FILES) up -d
 
 docs: ## Start API documentation tools (Swagger)
-	$(COMPOSE) -f docker-compose.yml -f compose/docs.yml up -d
+	COMPOSE_PROFILES=docs $(COMPOSE) $(COMPOSE_FILES) up -d
 
 #--------------------------------------------------------------------------
 # Preset Environments for Multi-Language Development
