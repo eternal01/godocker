@@ -19,6 +19,7 @@ ARG SYSTEM_VERSION=bookworm
 FROM debian:${SYSTEM_VERSION}-slim
 
 ARG ETCD_VERSION
+ARG TARGETARCH
 # CN-friendly GitHub release mirror. ghfast.top is a public reverse proxy
 # that fronts github.com/.../releases/download/* — the original URL is the
 # path component, so it works for any release tarball. Falls back to the
@@ -42,14 +43,20 @@ RUN set -eux; \
       curl -fsSL --retry 5 --retry-delay 5 -o /tmp/etcd.tgz "$url"; \
     }; \
     \
-    TARBALL_URL="${GITHUB_MIRROR}/etcd-io/etcd/releases/download/v${ETCD_VERSION#v}/etcd-v${ETCD_VERSION#v}-linux-amd64.tar.gz"; \
+    case "${TARGETARCH}" in \
+      amd64) ETCD_ARCH="amd64" ;; \
+      arm64) ETCD_ARCH="arm64" ;; \
+      *) echo "Unsupported TARGETARCH for etcd: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    ETCD_RELEASE="etcd-v${ETCD_VERSION#v}-linux-${ETCD_ARCH}"; \
+    TARBALL_URL="${GITHUB_MIRROR}/etcd-io/etcd/releases/download/v${ETCD_VERSION#v}/${ETCD_RELEASE}.tar.gz"; \
     if ! download_tarball "$TARBALL_URL"; then \
       echo "⚠ mirror failed, falling back to github.com"; \
-      TARBALL_URL="https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION#v}/etcd-v${ETCD_VERSION#v}-linux-amd64.tar.gz"; \
+      TARBALL_URL="https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION#v}/${ETCD_RELEASE}.tar.gz"; \
       download_tarball "$TARBALL_URL"; \
     fi; \
     \
-    EXTRACT_DIR="/tmp/etcd-v${ETCD_VERSION#v}-linux-amd64"; \
+    EXTRACT_DIR="/tmp/${ETCD_RELEASE}"; \
     mkdir -p /opt/bitnami/etcd/bin; \
     tar -xzf /tmp/etcd.tgz -C /tmp; \
     install -m 0755 "$EXTRACT_DIR/etcd"    /opt/bitnami/etcd/bin/etcd; \

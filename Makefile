@@ -4,7 +4,7 @@ COMPOSE_FILES ?= -f docker-compose.yml -f compose/db.yml -f compose/cache.yml -f
 # Detect available compose files and build dynamic targets
 AVAILABLE_COMPOSES := $(wildcard compose/*.yml)
 
-.PHONY: help init build-workspace config up shell down ps logs \
+.PHONY: help init build-workspace build-workspace-multiarch config up shell down ps logs \
         db cache mq storage registry observability ci gateway docs \
         go-env rust-env php-env full-env dev check lock
 
@@ -34,6 +34,9 @@ init: ## Initialize project: copy .env.example to .env, create data directory
 
 build-workspace: ## Build the workspace image
 	$(COMPOSE) build workspace
+
+build-workspace-multiarch: ## Build workspace for WORKSPACE_PLATFORMS (use PUSH=1 for multiple platforms)
+	@./scripts/build-workspace.sh
 
 config: ## Validate and print docker compose configuration
 	$(COMPOSE) $(COMPOSE_FILES) config

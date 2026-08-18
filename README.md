@@ -18,6 +18,52 @@ docker compose build workspace
 docker compose up -d workspace
 ```
 
+### 多架构构建
+
+普通命令只构建当前 Docker 主机架构：
+
+```bash
+docker compose build workspace
+```
+
+项目提供 Buildx 入口构建 `linux/amd64` 和 `linux/arm64`。多架构 manifest 需要推送到镜像仓库：
+
+```bash
+docker buildx create --name development-docker-builder --use  # 只需执行一次
+docker buildx inspect --bootstrap
+PUSH=1 WORKSPACE_IMAGE=registry.example.com/team/workspace:latest \
+  make build-workspace-multiarch
+```
+
+只构建当前机器可加载的单一架构时：
+
+```bash
+PLATFORMS=linux/arm64 make build-workspace-multiarch
+```
+
+workspace 和 etcd 已根据 BuildKit 的 `TARGETARCH` 选择对应二进制；其余基础设施镜像仍取决于上游镜像是否发布了对应架构的 manifest。
+
+如果构建日志仍显示 `curl: (35) OpenSSL SSL_connect`，优先检查 `.env` 中的 `HOST_PROXY_URL`：确认宿主机代理正在监听 `7897` 并允许局域网连接；如果当前没有代理，暂时清空 `HOST_PROXY_URL` 后再构建。新的 mise 安装流程会在网络失败时直接停止，不会再产生后续的 `mv: cannot stat` 误导性错误。
+
+如果 apt 报告 `502 Bad Gateway`，通常是代理无法转发 Debian 的 HTTP 下载请求。构建阶段会先通过 HTTP 安装 `ca-certificates`，然后把 Debian 软件源切换为 HTTPS，并支持切换镜像：
+
+这样可以避免基础 Debian 镜像尚未安装 CA 根证书时直接访问 HTTPS 导致的 `Certificate verification failed`。
+
+```dotenv
+DEBIAN_MIRROR=mirrors.aliyun.com
+DEBIAN_SECURITY_MIRROR=mirrors.aliyun.com
+```
+
+默认模板使用官方源；当前本地 `.env` 使用阿里云镜像。也可以替换为企业内网 Debian 镜像。
+
+如果构建失败在 Debian 基础包安装阶段，请使用 plain 模式查看真正失败的软件包或软件源：
+
+```bash
+docker compose build --progress=plain workspace
+```
+
+workspace 会对 apt 索引更新、基础包安装和可选包安装分别进行重试。如果仍然失败，重点检查代理连通性、`deb.debian.org` / Debian security 软件源，以及目标架构是否有对应软件包。
+
 ## 服务组合
 
 `.env` 已通过 `COMPOSE_FILE` 加载全部 Compose 模块；默认仍只启动 `workspace`。使用 profile 按需启动基础设施：
@@ -52,6 +98,43 @@ make down
 ```
 
 ## Workspace
+
+### GUI AI 与 CLI AI
+
+推荐将 GUI AI 应用运行在宿主机，将 SDK、编译器和项目依赖全部保留在 workspace 容器中：
+
+```text
+宿主机 GUI AI / 编辑器       ~/codes/project
+                                     │ 代码共享
+workspace 容器               /workspace/project
+```
+
+GUI AI 应用打开宿主机目录 `~/codes/project` 即可读写代码。项目命令不要直接在宿主机运行，使用项目提供的命令桥：
+
+```bash
+./scripts/dev up
+./scripts/dev exec go test ./...
+./scripts/dev exec cargo test
+./scripts/dev exec composer install
+./scripts/dev exec npm test
+./scripts/dev shell
+```
+
+命令桥会根据当前目录映射容器工作目录，保证测试、构建、Lint 和依赖安装都在 workspace 内执行。这样宿主机不需要安装 Go、Rust、PHP、Node.js 或 Python。
+
+CLI 类型的 AI 工具可以直接在容器内手动安装：
+
+```bash
+./scripts/dev shell
+brew install <ai-cli>
+# 或使用 mise / npm / cargo 安装对应 CLI
+```
+
+手动安装会保留在当前容器中，但容器重建后可能丢失。需要让 CLI 成为可复现环境的一部分时，将对应安装包加入 `.env` 的 `WORKSPACE_BREW_PACKAGES`，再执行 `make build-workspace`；需要保存登录配置时，按具体 CLI 增加独立配置 volume，不要把整个宿主机 Home 目录挂进容器。
+
+CLI 工具的认证信息应通过容器内环境变量或对应的配置挂载提供，不要提交到 Git。需要长期保留 CLI 配置时，应针对具体工具增加独立 volume 或安全的宿主机只读挂载，避免把整个宿主机 Home 目录暴露给容器。
+
+这种模式的边界是：GUI AI 负责编辑和交互，workspace 容器负责运行语言工具链；CLI AI 直接在 workspace 内运行，因此两者使用同一份代码和同一套依赖。
 
 ### 语言版本管理
 
@@ -134,6 +217,25 @@ WORKSPACE_BREW_PACKAGES="jq ripgrep fd bat"
 ```
 
 Homebrew 下载缓存会持久化，但 Homebrew 安装目录保留在镜像层中，不会被空 volume 覆盖。
+
+构建 Homebrew 阶段时建议使用 plain 日志：
+
+```bash
+docker compose --progress=plain build workspace
+```
+
+日志中的阶段标记含义：
+
+```text
+[workspace] Homebrew: downloading installer
+[workspace] Homebrew: updating metadata
+[workspace] Homebrew: installing ...
+[workspace] Homebrew: packages installed
+```
+
+只要构建命令仍在运行且没有返回 shell 提示符，通常表示仍在下载或编译；如果出现 `failed to solve` 或命令返回非零状态，则表示构建已终止。
+
+如果 Homebrew 日志出现 `curl 92 HTTP/2 stream`、`GnuTLS recv error`、`early EOF` 或 `fetch-pack`，通常是代理或链路在 Git 大仓库传输过程中断开。构建脚本会自动将 Homebrew 使用的 Git 连接切换到 HTTP/1.1、限制并发并重试安装；仍失败时，优先更换代理节点或使用更稳定的网络后重试。
 
 ### 使用主机代理
 

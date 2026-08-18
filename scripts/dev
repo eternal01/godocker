@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Host-side bridge for GUI AI tools and editors. File edits happen on the host
+# bind mount; project commands are always executed in the workspace container.
+COMPOSE=(docker compose)
+WORKSPACE_SERVICE="${WORKSPACE_SERVICE:-workspace}"
+HOST_CODES_ROOT="${HOME}/codes"
+CONTAINER_CODES_ROOT="/workspace"
+
+container_workdir() {
+    local current relative
+    current="$(pwd -P)"
+
+    case "${current}" in
+        "${HOST_CODES_ROOT}")
+            printf '%s\n' "${CONTAINER_CODES_ROOT}"
+            ;;
+        "${HOST_CODES_ROOT}"/*)
+            relative="${current#${HOST_CODES_ROOT}/}"
+            printf '%s/%s\n' "${CONTAINER_CODES_ROOT}" "${relative}"
+            ;;
+        *)
+            printf '%s\n' "${CONTAINER_CODES_ROOT}"
+            ;;
+    esac
+}
+
+usage() {
+    cat <<'EOF'
+Usage: ./scripts/dev <command> [args...]
+
+Commands:
+  up                 Start the workspace container
+  down               Stop the workspace container
+  shell              Open an interactive zsh shell in the current directory
+  exec <command>     Run a command in the workspace container
+  logs               Follow workspace logs
+
+Examples:
+  ./scripts/dev up
+  ./scripts/dev exec go test ./...
+  ./scripts/dev exec cargo test
+  ./scripts/dev shell
+EOF
+}
+
+command="${1:-}"
+shift || true
+
+case "${command}" in
+    up)
+        "${COMPOSE[@]}" up -d "${WORKSPACE_SERVICE}"
+        ;;
+    down)
+        "${COMPOSE[@]}" stop "${WORKSPACE_SERVICE}"
+        ;;
+    shell)
+        "${COMPOSE[@]}" exec "${WORKSPACE_SERVICE}" zsh
+        ;;
+    exec)
+        [ "$#" -gt 0 ] || { usage >&2; exit 2; }
+        "${COMPOSE[@]}" exec -T -w "$(container_workdir)" "${WORKSPACE_SERVICE}" bash -lc "$*"
+        ;;
+    logs)
+        "${COMPOSE[@]}" logs -f "${WORKSPACE_SERVICE}"
+        ;;
+    help|--help|-h|'')
+        usage
+        ;;
+    *)
+        printf 'Unknown command: %s\n\n' "${command}" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

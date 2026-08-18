@@ -9,6 +9,9 @@ ARG SYSTEM_NAME=debian
 ARG SYSTEM_VERSION=bookworm
 FROM ${SYSTEM_NAME}:${SYSTEM_VERSION}
 
+# BuildKit provides TARGETARCH for the requested target platform.
+ARG TARGETARCH
+
 LABEL maintainer="muxk <361087696@qq.com>"
 LABEL description="Development workspace with mise, homebrew, zsh"
 
@@ -26,6 +29,7 @@ ARG PGID=1000
 ARG WORKSPACE_USER=developer
 ARG WORKSPACE_HOME=/home/developer
 ARG WORKSPACE_PATH=/workspace
+ARG TARGETARCH
 
 ARG WORKSPACE_INSTALL_DNSUTILS=false
 ARG WORKSPACE_INSTALL_WORKSPACE_SSH=false
@@ -36,15 +40,16 @@ ARG WORKSPACE_BREW_PACKAGES="jq yq ripgrep fzf tree tmux fd neovim"
 ARG WORKSPACE_PREINSTALL_LANGUAGES=""
 # Pin mise to a specific release. Override through the Compose build arg.
 ARG MISE_VERSION=v2026.6.1
+ARG MISE_RELEASE_BASE_URL=https://github.com/jdx/mise/releases/download
 
 # Proxy support: declared as ARG, exported as ENV (both upper- and lower-case so
 # apt, curl, go, and pip all pick it up). Leave HTTP_PROXY empty in .env to
-# disable. The compose file passes these as build args and uses
-# `build.network: host` so 127.0.0.1:port inside the build container resolves
-# to the host's proxy.
+# disable. The compose file passes these as build args.
 ARG HTTP_PROXY=
 ARG HTTPS_PROXY=
 ARG NO_PROXY=localhost,127.0.0.1,::1,.local
+ARG DEBIAN_MIRROR=deb.debian.org
+ARG DEBIAN_SECURITY_MIRROR=security.debian.org
 
 ENV TZ=${TZ}
 ENV WORKSPACE_USER=${WORKSPACE_USER}
@@ -92,52 +97,90 @@ ENV HOMEBREW_NO_INSTALL_CLEANUP=1
 ###########################################################################
 
 # Retry wrapper: apt-get returns exit code 100 when "Some files failed to
-# download" — a transient network blip against deb.debian.org shouldn't fail
-# the whole image build. `--fix-missing` keeps the install going when a single
-# .deb fails, and the for-loop retries the whole batch up to three times.
-RUN apt-get update \
-    && for i in 1 2 3; do \
-         apt-get install -y --no-install-recommends --fix-missing \
-         bash \
-         binutils \
-         bison \
-         build-essential \
-         bzip2 \
-         ca-certificates \
-         curl \
-         file \
-         git \
-         gosu \
-         gnupg \
-         less \
-         locales \
-         make \
-         mercurial \
-         openssl \
-         patch \
-         pkg-config \
-         procps \
-         rsync \
-         screen \
-         socat \
-         sudo \
-         tar \
-         unzip \
-         vim \
-         wget \
-         xz-utils \
-         zip \
-         zsh \
-         zsh-syntax-highlighting \
-         && break; \
-       done \
-    && if [ "${WORKSPACE_INSTALL_DNSUTILS}" = "true" ]; then \
-         apt-get install -y --no-install-recommends --fix-missing dnsutils iputils-ping net-tools; \
-       fi \
-    && if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
-         apt-get install -y --no-install-recommends --fix-missing openssh-server; \
-       fi \
-    && ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+# download" — a transient network blip against Debian mirrors shouldn't fail
+# the whole image build. Both package-list updates and package installs retry.
+# Bootstrap over HTTP so ca-certificates can be installed before HTTPS
+# verification is enabled. All subsequent apt traffic uses HTTPS.
+RUN set -eux; \
+    find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec \
+      sed -i -E \
+        -e "s#https?://deb.debian.org#http://${DEBIAN_MIRROR}#g" \
+        -e "s#https?://security.debian.org#http://${DEBIAN_SECURITY_MIRROR}#g" \
+      {} +; \
+    apt_update() { \
+      for attempt in 1 2 3; do \
+        if apt-get update -o Acquire::Retries=5; then \
+          return 0; \
+        fi; \
+        echo "apt update failed (attempt ${attempt}/3); clearing apt lists" >&2; \
+        rm -rf /var/lib/apt/lists/*; \
+        sleep 3; \
+      done; \
+      echo "apt update failed after 3 attempts" >&2; \
+      return 1; \
+    }; \
+    apt_install() { \
+      for attempt in 1 2 3; do \
+        if apt-get install -y --no-install-recommends --fix-missing \
+          -o Acquire::Retries=5 "$@"; then \
+          return 0; \
+        fi; \
+        echo "apt install failed (attempt ${attempt}/3); refreshing package lists" >&2; \
+        apt-get clean; \
+        rm -rf /var/lib/apt/lists/*; \
+        apt_update; \
+      done; \
+      echo "apt install failed after 3 attempts: $*" >&2; \
+      return 1; \
+    }; \
+    rm -rf /var/lib/apt/lists/*; \
+    apt_update; \
+    apt_install ca-certificates; \
+    find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec \
+      sed -i \
+        -e "s#http://${DEBIAN_MIRROR}#https://${DEBIAN_MIRROR}#g" \
+        -e "s#http://${DEBIAN_SECURITY_MIRROR}#https://${DEBIAN_SECURITY_MIRROR}#g" \
+      {} +; \
+    rm -rf /var/lib/apt/lists/*; \
+    apt_update; \
+    apt_install \
+      bash \
+      binutils \
+      bison \
+      build-essential \
+      bzip2 \
+      curl \
+      file \
+      git \
+      gosu \
+      gnupg \
+      less \
+      locales \
+      make \
+      mercurial \
+      openssl \
+      patch \
+      pkg-config \
+      procps \
+      rsync \
+      screen \
+      socat \
+      sudo \
+      tar \
+      unzip \
+      vim \
+      wget \
+      xz-utils \
+      zip \
+      zsh \
+      zsh-syntax-highlighting; \
+    if [ "${WORKSPACE_INSTALL_DNSUTILS}" = "true" ]; then \
+      apt_install dnsutils iputils-ping net-tools; \
+    fi; \
+    if [ "${WORKSPACE_INSTALL_WORKSPACE_SSH}" = "true" ]; then \
+      apt_install openssh-server; \
+    fi; \
+    ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
     && echo ${TZ} > /etc/timezone \
     && sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen \
@@ -150,11 +193,20 @@ RUN apt-get update \
 # mise - Universal Language Version Manager
 ###########################################################################
 
-RUN mkdir -p ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH} \
-    && curl -fsSL https://mise.run | MISE_VERSION="${MISE_VERSION}" sh \
-    && mv /root/.local/bin/mise /usr/local/bin/mise \
-    && chmod +x /usr/local/bin/mise \
-    && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH}
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) MISE_ARCH="x64" ;; \
+      arm64) MISE_ARCH="arm64" ;; \
+      *) echo "Unsupported TARGETARCH for mise: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    MISE_URL="${MISE_RELEASE_BASE_URL}/${MISE_VERSION}/mise-${MISE_VERSION}-linux-${MISE_ARCH}"; \
+    mkdir -p ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH}; \
+    echo "Downloading mise ${MISE_VERSION} for linux-${MISE_ARCH}"; \
+    curl --fail --location --show-error --retry 5 --retry-all-errors --retry-delay 3 \
+      "${MISE_URL}" -o /usr/local/bin/mise; \
+    chmod +x /usr/local/bin/mise; \
+    /usr/local/bin/mise --version; \
+    chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} ${MISE_DATA_DIR} ${MISE_CONFIG_DIR} ${MISE_CACHE_DIR} ${WORKSPACE_PATH}
 
 ###########################################################################
 # Pre-install languages via mise at build time (optional)
@@ -170,6 +222,7 @@ RUN if [ -n "${WORKSPACE_PREINSTALL_LANGUAGES}" ]; then \
 ###########################################################################
 
 RUN if [ "${WORKSPACE_INSTALL_BREW}" = "true" ]; then \
+    echo "[workspace] Homebrew: preparing directories"; \
     mkdir -p /home/linuxbrew ${HOMEBREW_CACHE} \
     && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} /home/linuxbrew \
     # Defensive: in some build environments (Docker Desktop on macOS in
@@ -179,10 +232,16 @@ RUN if [ "${WORKSPACE_INSTALL_BREW}" = "true" ]; then \
     # ownership and mode that useradd -m should have produced.
     && chown -R ${WORKSPACE_USER}:${WORKSPACE_USER} /home/${WORKSPACE_USER} \
     && chmod 755 /home/${WORKSPACE_USER} \
-    && su - ${WORKSPACE_USER} -c 'NONINTERACTIVE=1 CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
-    && su - ${WORKSPACE_USER} -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew update --quiet' \
+    && echo "[workspace] Homebrew: configuring Git for unstable proxy links" \
+    && su - ${WORKSPACE_USER} -c 'git config --global http.version HTTP/1.1; git config --global http.maxRequests 1; git config --global http.lowSpeedLimit 1; git config --global http.lowSpeedTime 600' \
+    && echo "[workspace] Homebrew: downloading installer" \
+    && su - ${WORKSPACE_USER} -c 'set -e; curl --fail --location --show-error --retry 5 --retry-all-errors --retry-delay 3 https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/homebrew-install.sh; for attempt in 1 2 3; do if NONINTERACTIVE=1 CI=1 /bin/bash /tmp/homebrew-install.sh; then rm -f /tmp/homebrew-install.sh; exit 0; fi; echo "Homebrew installer failed (attempt ${attempt}/3); retrying" >&2; sleep $((attempt * 5)); done; rm -f /tmp/homebrew-install.sh; exit 1' \
+    && echo "[workspace] Homebrew: updating metadata" \
+    && su - ${WORKSPACE_USER} -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && HOMEBREW_VERBOSE=1 brew update' \
     && if [ -n "${WORKSPACE_BREW_PACKAGES}" ]; then \
-    su - ${WORKSPACE_USER} -c "eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\" && brew install ${WORKSPACE_BREW_PACKAGES}"; \
+    echo "[workspace] Homebrew: installing ${WORKSPACE_BREW_PACKAGES}"; \
+    su - ${WORKSPACE_USER} -c "eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\" && HOMEBREW_VERBOSE=1 brew install --verbose ${WORKSPACE_BREW_PACKAGES}"; \
+    echo "[workspace] Homebrew: packages installed"; \
     fi; \
     fi
 
