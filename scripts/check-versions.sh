@@ -10,7 +10,7 @@
 # Usage:
 #   ./scripts/check-versions.sh              # check all images, verbose
 #   ./scripts/check-versions.sh --quiet      # only show failures
-#   SKIP_VERSION_CHECK=1 make go-env         # bypass the check
+#   CHECK_VERSIONS=1 make go-env             # run the check before startup
 #
 # Configuration:
 #   - Registry mirrors are read from ~/.orbstack/config/docker.json
@@ -73,25 +73,12 @@ fi
 
 # --- Image discovery -----------------------------------------------------
 
-COMPOSE_FILES=(
-  -f docker-compose.yml
-  -f compose/db.yml
-  -f compose/cache.yml
-  -f compose/registry.yml
-  -f compose/mq.yml
-  -f compose/observability.yml
-  -f compose/storage.yml
-  -f compose/ci.yml
-  -f compose/gateway.yml
-  -f compose/docs.yml
-)
-
 log "→ resolving images from compose files..."
 # Enable every profile defined anywhere in compose/*.yml so `config --images`
 # returns the full set of images, not just the non-profiled ones.
 ALL_PROFILES=$(grep -hoE 'profiles:[[:space:]]*\[[^]]+\]' compose/*.yml 2>/dev/null | \
   grep -oE '"[^"]+"' | tr -d '"' | sort -u | paste -sd, -)
-if ! IMAGES=$(COMPOSE_PROFILES="$ALL_PROFILES" docker compose "${COMPOSE_FILES[@]}" config --images 2>&1); then
+if ! IMAGES=$(COMPOSE_PROFILES="$ALL_PROFILES" docker compose config --images 2>&1); then
   fail "✗ failed to resolve compose images:"
   echo "$IMAGES" >&2
   exit 2

@@ -1,8 +1,4 @@
 COMPOSE ?= docker compose
-COMPOSE_FILES ?= -f docker-compose.yml -f compose/db.yml -f compose/cache.yml -f compose/registry.yml -f compose/mq.yml -f compose/observability.yml -f compose/storage.yml -f compose/ci.yml -f compose/gateway.yml -f compose/docs.yml
-
-# Detect available compose files and build dynamic targets
-AVAILABLE_COMPOSES := $(wildcard compose/*.yml)
 
 .PHONY: help init build-workspace build-workspace-multiarch config up shell down ps logs \
         db cache mq storage registry observability ci gateway docs \
@@ -39,50 +35,50 @@ build-workspace-multiarch: ## Build workspace for WORKSPACE_PLATFORMS (use PUSH=
 	@./scripts/build-workspace.sh
 
 config: ## Validate and print docker compose configuration
-	$(COMPOSE) $(COMPOSE_FILES) config
+	$(COMPOSE) config
 
 up: ## Start workspace only
 	$(COMPOSE) up -d workspace
 
 shell: ## Enter workspace shell (zsh)
-	$(COMPOSE) exec workspace zsh
+	$(COMPOSE) exec -u developer workspace zsh
 
 down: ## Stop and remove all services
-	$(COMPOSE) $(COMPOSE_FILES) down
+	$(COMPOSE) down
 
 ps: ## List running containers
-	$(COMPOSE) $(COMPOSE_FILES) ps
+	$(COMPOSE) ps
 
 logs: ## Follow logs for all services
-	$(COMPOSE) $(COMPOSE_FILES) logs -f
+	$(COMPOSE) logs -f
 
 #--------------------------------------------------------------------------
 # Infrastructure Profiles (modular compose files)
 #--------------------------------------------------------------------------
 
 db: ## Start database services (MySQL, Postgres, Mongo, PostGIS)
-	COMPOSE_PROFILES=db $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=db $(COMPOSE) up -d
 
 cache: ## Start cache services (Redis)
-	COMPOSE_PROFILES=cache $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=cache $(COMPOSE) up -d
 
 mq: ## Start message queue services (RabbitMQ, Kafka)
-	COMPOSE_PROFILES=mq $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=mq $(COMPOSE) up -d
 
 storage: ## Start storage services (MinIO)
-	COMPOSE_PROFILES=storage $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=storage $(COMPOSE) up -d
 
 registry: ## Start registry/coordination services (etcd, DTM)
-	COMPOSE_PROFILES=registry $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=registry $(COMPOSE) up -d
 
 observability: ## Start observability stack (ELK, Grafana, Prometheus, Jaeger)
-	COMPOSE_PROFILES=observability $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=observability $(COMPOSE) up -d
 
 ci: ## Start CI/management services (GitLab, Portainer) - requires Postgres + Redis
-	COMPOSE_PROFILES=ci,db,cache $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=ci,db,cache $(COMPOSE) up -d
 
 gateway: ## Start gateway (Traefik) - dashboard only, services on host ports
-	COMPOSE_PROFILES=gateway $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=gateway $(COMPOSE) up -d
 
 # Traefik opt-in 路由（需在 .env 设置 TRAEFIK_ENABLE=true）
 # 用法：make gateway-routed PROFILES="mysql redis kafka"
@@ -91,10 +87,10 @@ gateway-routed: ## Start Traefik with service routing enabled (set TRAEFIK_ENABL
 	@set -a; . ./.env; set +a; test "$$TRAEFIK_ENABLE" = "true" || (echo "❌ TRAEFIK_ENABLE must be set to 'true' in .env" && exit 1)
 	@test -n "$(PROFILES)" || (echo "❌ PROFILES must contain at least one service profile" && exit 1)
 	@set -a; . ./.env; set +a; PROFILES_CSV="$$(echo "$(PROFILES)" | tr ' ' ',')"; \
-	COMPOSE_PROFILES="gateway,$$PROFILES_CSV" $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES="gateway,$$PROFILES_CSV" $(COMPOSE) up -d
 
 docs: ## Start API documentation tools (Swagger)
-	COMPOSE_PROFILES=docs $(COMPOSE) $(COMPOSE_FILES) up -d
+	COMPOSE_PROFILES=docs $(COMPOSE) up -d
 
 #--------------------------------------------------------------------------
 # Preset Environments for Multi-Language Development

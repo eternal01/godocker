@@ -5,9 +5,8 @@
 # 语言运行时通过 mise 在构建时或启动时按需安装
 #--------------------------------------------------------------------------
 
-ARG SYSTEM_NAME=debian
-ARG SYSTEM_VERSION=bookworm
-FROM ${SYSTEM_NAME}:${SYSTEM_VERSION}
+ARG BASE_IMAGE=debian:bookworm
+FROM ${BASE_IMAGE}
 
 # BuildKit provides TARGETARCH for the requested target platform.
 ARG TARGETARCH
@@ -77,6 +76,9 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 ENV MISE_DATA_DIR=${WORKSPACE_HOME}/.local/share/mise
 ENV MISE_CONFIG_DIR=${WORKSPACE_HOME}/.config/mise
 ENV MISE_CACHE_DIR=${WORKSPACE_HOME}/.cache/mise
+# Keep mise shims available to non-interactive shells as well. Interactive
+# zsh still evaluates `mise activate zsh` for project-aware environment setup.
+ENV PATH=${MISE_DATA_DIR}/shims:/usr/local/bin:${PATH}
 # Project detection is explicit by default. Set WORKSPACE_AUTO_DETECT=true to
 # opt into generating .mise.toml on directory changes.
 ENV MISE_AUTO_INSTALL=false
@@ -91,6 +93,9 @@ ENV HOMEBREW_CACHE=/home/linuxbrew/.cache/Homebrew
 ENV HOMEBREW_NO_ANALYTICS=1
 ENV HOMEBREW_NO_AUTO_UPDATE=1
 ENV HOMEBREW_NO_INSTALL_CLEANUP=1
+# Keep brew usable from VS Code tasks, bash, and non-login shells too. The
+# zshrc still runs `brew shellenv` for the remaining Homebrew environment.
+ENV PATH=${HOMEBREW_PREFIX}/bin:${HOMEBREW_PREFIX}/sbin:${MISE_DATA_DIR}/shims:/usr/local/bin:${PATH}
 
 ###########################################################################
 # Base System Tools

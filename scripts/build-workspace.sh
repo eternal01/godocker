@@ -12,7 +12,7 @@ if [ -f "${ROOT_DIR}/.env" ]; then
     set +a
 fi
 
-PLATFORMS="${PLATFORMS:-${WORKSPACE_PLATFORMS:-linux/amd64,linux/arm64}}"
+PLATFORMS="${PLATFORMS:-${WORKSPACE_PLATFORMS:-}}"
 IMAGE="${IMAGE:-${WORKSPACE_IMAGE:-development-docker/workspace:multiarch}}"
 PUSH="${PUSH:-0}"
 
@@ -21,7 +21,7 @@ usage() {
 Usage: scripts/build-workspace.sh
 
 Environment:
-  WORKSPACE_PLATFORMS  Target platforms, default: linux/amd64,linux/arm64
+  WORKSPACE_PLATFORMS  Target platforms, empty means the host architecture
   WORKSPACE_IMAGE      Image tag, default: development-docker/workspace:multiarch
   PUSH=1               Push the multi-platform manifest to the image registry
 
@@ -37,10 +37,12 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     exit 0
 fi
 
-case ",${PLATFORMS}," in
-    *,linux/amd64,*|*,linux/arm64,*) ;;
-    *) echo "Unsupported workspace platform list: ${PLATFORMS}" >&2; exit 1 ;;
-esac
+if [ -n "${PLATFORMS}" ]; then
+    case ",${PLATFORMS}," in
+        *,linux/amd64,*|*,linux/arm64,*) ;;
+        *) echo "Unsupported workspace platform list: ${PLATFORMS}" >&2; exit 1 ;;
+    esac
+fi
 
 if [[ "${PLATFORMS}" == *,* ]] && [ "${PUSH}" != "1" ]; then
     echo "Multi-platform builds require PUSH=1 and a registry image tag." >&2
@@ -49,8 +51,7 @@ if [[ "${PLATFORMS}" == *,* ]] && [ "${PUSH}" != "1" ]; then
 fi
 
 build_args=(
-    --build-arg "SYSTEM_NAME=${SYSTEM_NAME:-debian}"
-    --build-arg "SYSTEM_VERSION=${SYSTEM_VERSION:-bookworm}"
+    --build-arg "BASE_IMAGE=${BASE_IMAGE:-debian:bookworm}"
     --build-arg "WORKSPACE_USER=${WORKSPACE_USER:-developer}"
     --build-arg "WORKSPACE_HOME=${WORKSPACE_HOME:-/home/developer}"
     --build-arg "WORKSPACE_PATH=${APP_CODE_PATH_CONTAINER:-/workspace}"
@@ -73,7 +74,6 @@ build_args=(
 
 cmd=(
     docker buildx build
-    --platform "${PLATFORMS}"
     --file "${ROOT_DIR}/workspaces/workspace.Dockerfile"
     --tag "${IMAGE}"
     --network "${WORKSPACE_BUILD_NETWORK:-default}"
@@ -81,9 +81,13 @@ cmd=(
     "${build_args[@]}"
 )
 
+if [ -n "${PLATFORMS}" ]; then
+    cmd+=(--platform "${PLATFORMS}")
+fi
+
 if [ "${PUSH}" = "1" ]; then
     cmd+=(--push)
-elif [[ "${PLATFORMS}" != *,* ]]; then
+elif [ -z "${PLATFORMS}" ] || [[ "${PLATFORMS}" != *,* ]]; then
     cmd+=(--load)
 fi
 

@@ -25,10 +25,8 @@
 
 set -euo pipefail
 
-# Pre-pull with exponential backoff. Chinese public registry mirrors
-# frequently return 429 under load, and Docker does NOT fall back to the
-# next mirror when manifest resolution returns 429. Retrying with
-# backoff lets the rate-limit clear without bouncing the whole dev env.
+# Pull explicitly only when requested. Normal startup uses Docker's local
+# cache and Compose's default pull behavior.
 pull_with_retry() {
   local attempt=0 max=5
   while [ $attempt -lt "$max" ]; do
@@ -75,43 +73,22 @@ fi
 
 cd "$(dirname "$0")/.."
 
-# Pre-flight: verify every image is reachable on at least one configured
-# mirror. Saves time on misconfigured versions (e.g. wrong tag prefix)
-# by failing fast instead of mid-pull. Set SKIP_VERSION_CHECK=1 to bypass.
-if [ "${SKIP_VERSION_CHECK:-0}" != "1" ]; then
+if [ "${CHECK_VERSIONS:-0}" = "1" ]; then
   if ! ./scripts/check-versions.sh > /dev/null 2>&1; then
     echo ""
-    echo "✗ pre-flight check failed (set SKIP_VERSION_CHECK=1 to bypass):"
+    echo "✗ pre-flight check failed (set CHECK_VERSIONS=0 to bypass):"
     ./scripts/check-versions.sh
     exit 1
   fi
 fi
 
-COMPOSE_FILES=(
-  -f docker-compose.yml
-  -f compose/db.yml
-  -f compose/cache.yml
-  -f compose/registry.yml
-  -f compose/mq.yml
-  -f compose/observability.yml
-  -f compose/storage.yml
-  -f compose/ci.yml
-  -f compose/gateway.yml
-  -f compose/docs.yml
-)
-
 if [ -n "$SERVICES" ]; then
   PROFILES=$(echo "$SERVICES" | tr ' ' ',')
   echo "→ [$PRESET] starting: $SERVICES"
-  # --policy always re-fetches blobs even when the manifest digest already
-  # matches the local copy. The default ("missing") skips blob download in
-  # that case, which can leave a half-pulled image whose layer blobs were
-  # GC'd from the local content store — the manifest is fine but layer
-  # extraction then 404s with "NotFound ... content store". "always" makes
-  # that class of failure impossible at the cost of a few extra MB on a
-  # warm cache.
-  COMPOSE_PROFILES="$PROFILES" pull_with_retry docker compose "${COMPOSE_FILES[@]}" pull --policy always
-  COMPOSE_PROFILES="$PROFILES" docker compose "${COMPOSE_FILES[@]}" up -d $SERVICES
+  if [ "${PULL_IMAGES:-0}" = "1" ]; then
+    COMPOSE_PROFILES="$PROFILES" pull_with_retry docker compose pull
+  fi
+  COMPOSE_PROFILES="$PROFILES" docker compose up -d $SERVICES
 else
   echo "→ [$PRESET] no services selected"
   exit 1

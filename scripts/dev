@@ -56,11 +56,13 @@ case "${command}" in
         "${COMPOSE[@]}" stop "${WORKSPACE_SERVICE}"
         ;;
     shell)
-        "${COMPOSE[@]}" exec "${WORKSPACE_SERVICE}" zsh
+        "${COMPOSE[@]}" exec -u developer "${WORKSPACE_SERVICE}" zsh
         ;;
     exec)
         [ "$#" -gt 0 ] || { usage >&2; exit 2; }
-        "${COMPOSE[@]}" exec -T -w "$(container_workdir)" "${WORKSPACE_SERVICE}" bash -lc "$*"
+        command_string="$*"
+        "${COMPOSE[@]}" exec -u developer -T -w "$(container_workdir)" "${WORKSPACE_SERVICE}" \
+            bash -lc "eval '\$(/usr/local/bin/mise activate bash)' && ${command_string}"
         ;;
     logs)
         "${COMPOSE[@]}" logs -f "${WORKSPACE_SERVICE}"

@@ -54,8 +54,7 @@ services:
       extra_hosts:
         - "host.docker.internal:host-gateway"
       args:
-        - SYSTEM_NAME=${SYSTEM_NAME}
-        - SYSTEM_VERSION=${SYSTEM_VERSION}
+        - BASE_IMAGE=${BASE_IMAGE}
         - WORKSPACE_USER=${WORKSPACE_USER}
         - WORKSPACE_HOME=${WORKSPACE_HOME}
         - WORKSPACE_PATH=${APP_CODE_PATH_CONTAINER}
@@ -100,6 +99,10 @@ services:
       - https_proxy=${HTTPS_PROXY}
       - no_proxy=${NO_PROXY}
       - WORKSPACE_AUTO_DETECT=${WORKSPACE_AUTO_DETECT}
+      - WORKSPACE_SSH_ENABLED=${WORKSPACE_SSH_ENABLED}
+    # PID 1 initializes SSHD as root; the entrypoint drops the main command
+    # and SSH sessions to WORKSPACE_USER.
+    user: "${WORKSPACE_CONTAINER_USER}"
     ports:
       - "${WORKSPACE_SSH_PORT}:22"
       - "${WORKSPACE_SERVE_HOST_PORT}:1080"
